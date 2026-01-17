@@ -10,8 +10,10 @@ interface ChatMessageProps {
 }
 
 function renderMathContent(content: string): string {
-  // Process display math ($$...$$)
-  let processed = content.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+  let processed = content;
+
+  // Process display math: \[...\]
+  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try {
       return `<div class="katex-display">${katex.renderToString(math.trim(), { 
         displayMode: true,
@@ -22,7 +24,31 @@ function renderMathContent(content: string): string {
     }
   });
 
-  // Process inline math ($...$)
+  // Process display math: $$...$$
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+    try {
+      return `<div class="katex-display">${katex.renderToString(math.trim(), { 
+        displayMode: true,
+        throwOnError: false 
+      })}</div>`;
+    } catch {
+      return `<code>${math}</code>`;
+    }
+  });
+
+  // Process inline math: \(...\)
+  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
+    try {
+      return katex.renderToString(math.trim(), { 
+        displayMode: false,
+        throwOnError: false 
+      });
+    } catch {
+      return `<code>${math}</code>`;
+    }
+  });
+
+  // Process inline math: $...$
   processed = processed.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
     try {
       return katex.renderToString(math.trim(), { 
