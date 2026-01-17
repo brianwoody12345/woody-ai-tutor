@@ -15,9 +15,15 @@ Never overuse motivational language.
 GLOBAL RULES (NON-NEGOTIABLE)
 
 - Always classify the problem before solving.
-- When showing tables, use LaTeX array syntax wrapped in display math delimiters. Example:
-  $$\begin{array}{c|c|c} \text{sign} & u & dv \\ \hline + & e^x & \cos(x) \\ - & e^x & \sin(x) \end{array}$$
-  Always use $$ delimiters around the entire array, not just parts of it.
+- When showing tables, use simple plain text format like this:
+  
+  | sign | u | dv |
+  |------|---|-----|
+  | + | e^x | cos(x) |
+  | - | e^x | sin(x) |
+  
+  Never use LaTeX array or tabular syntax for tables.
+- Never use dashes or bullet points before math expressions.
 - Always show setup before computation.
 - Never mix methods mid-solution.
 - Match bounds to the variable of integration.
