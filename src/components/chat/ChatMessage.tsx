@@ -12,19 +12,6 @@ interface ChatMessageProps {
 function renderMathContent(content: string): string {
   let processed = content;
 
-  // First, handle LaTeX array/table environments that may be floating without delimiters
-  // Match \begin{array}...\end{array} and wrap in display math
-  processed = processed.replace(/(\\begin\{array\}[\s\S]*?\\end\{array\})/g, (match) => {
-    try {
-      return `<div class="katex-display">${katex.renderToString(match.trim(), { 
-        displayMode: true,
-        throwOnError: false 
-      })}</div>`;
-    } catch {
-      return `<pre><code>${match}</code></pre>`;
-    }
-  });
-
   // Process display math: \[...\]
   processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try {
@@ -75,6 +62,16 @@ function renderMathContent(content: string): string {
 
   // Convert markdown-style bold **text** to <strong>
   processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Convert markdown tables to HTML tables
+  processed = processed.replace(/\|(.+)\|\n\|[-| ]+\|\n((?:\|.+\|\n?)+)/g, (match, header, body) => {
+    const headerCells = header.split('|').filter((c: string) => c.trim()).map((c: string) => `<th style="border: 1px solid hsl(var(--border)); padding: 8px; text-align: center;">${c.trim()}</th>`).join('');
+    const rows = body.trim().split('\n').map((row: string) => {
+      const cells = row.split('|').filter((c: string) => c.trim()).map((c: string) => `<td style="border: 1px solid hsl(var(--border)); padding: 8px; text-align: center;">${c.trim()}</td>`).join('');
+      return `<tr>${cells}</tr>`;
+    }).join('');
+    return `<table style="border-collapse: collapse; margin: 1rem 0; width: auto;"><thead><tr>${headerCells}</tr></thead><tbody>${rows}</tbody></table>`;
+  });
 
   // Convert newlines to <br> for basic formatting
   processed = processed.replace(/\n/g, '<br>');
