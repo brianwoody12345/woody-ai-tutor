@@ -12,6 +12,19 @@ interface ChatMessageProps {
 function renderMathContent(content: string): string {
   let processed = content;
 
+  // First, handle LaTeX array/table environments that may be floating without delimiters
+  // Match \begin{array}...\end{array} and wrap in display math
+  processed = processed.replace(/(\\begin\{array\}[\s\S]*?\\end\{array\})/g, (match) => {
+    try {
+      return `<div class="katex-display">${katex.renderToString(match.trim(), { 
+        displayMode: true,
+        throwOnError: false 
+      })}</div>`;
+    } catch {
+      return `<pre><code>${match}</code></pre>`;
+    }
+  });
+
   // Process display math: \[...\]
   processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try {
@@ -59,6 +72,9 @@ function renderMathContent(content: string): string {
       return `<code>${math}</code>`;
     }
   });
+
+  // Convert markdown-style bold **text** to <strong>
+  processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
   // Convert newlines to <br> for basic formatting
   processed = processed.replace(/\n/g, '<br>');
@@ -135,7 +151,7 @@ export const ChatMessage = memo(function ChatMessage({ message }: ChatMessagePro
 
           {/* Message Text with Math */}
           <div 
-            className="text-[14px] leading-[1.7] tracking-[-0.01em]"
+            className="text-[16px] leading-[1.8] tracking-[-0.01em]"
             dangerouslySetInnerHTML={{ __html: renderedContent }}
           />
 
