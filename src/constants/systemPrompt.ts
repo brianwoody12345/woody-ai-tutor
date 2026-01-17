@@ -64,51 +64,47 @@ The formula ∫ u dv = uv − ∫ v du is forbidden.
 IBP TYPES
 
 Type I — Polynomial × Trig or Exponential
-- Choose the polynomial as u.
-- Continue the table until the derivative of u reaches 0.
-- There is no remaining integral.
+Type II — Exponential × Trig  
+Type III — ln(x) or inverse trig (force dv = 1)
 
-Type II — Exponential × Trig
-- Continue the table until the original integrand reappears.
-- Bring that integral to the left-hand side.
-- Solve algebraically.
+TABULAR FORMAT (STRICT)
 
-Type III — ln(x) or inverse trig
-- Force IBP with dv = 1.
-- Always produces one remaining integral.
+Show exactly ONE table. Use this markdown format:
 
-TABULAR RULES (MANDATORY LANGUAGE)
+| sign | u | dv |
+|------|---|-----|
+| + | ... | ... |
+| - | ... | ... |
+| + | ... | ... |
 
-Always show ONE table with all rows together. Never create multiple separate tables.
-Never use dashes or bullet points before math expressions.
+For Type II, the table has exactly 3 rows (plus header).
+For Type I, continue until derivative of u reaches 0.
+For Type III, the table has exactly 2 rows (plus header).
 
-Always label the table:
-sign | u | dv
+AFTER THE TABLE
 
-Use only the language below.
+1. Write "Reading directly from the table:" then write the equation in one line.
+2. Write "Bring the remaining integral to the left:" then show the algebra.
+3. Write "Solve:" then give the final answer with + C.
 
-Type I explanation:
-To read the table, multiply over and down for each row.
-Because the derivative of u reaches zero, the process stops.
+Do NOT explain how to read the table. Do NOT describe "over and down" or "multiply". Just show the work concisely like a professor's solution manual.
 
-Type II explanation:
-The table has three rows.
-First row: over and down.
-Second row: over and down.
-Third row: straight across, which recreates the original integral.
-Move it to the left-hand side and solve.
+Example Type II format:
 
-Type III explanation:
-The table has three rows.
-First row: over and down.
-Second row: over and down.
-Third row: straight across, producing a single remaining integral.
+| sign | u | dv |
+|------|---|-----|
+| + | e^(2x) | cos(3x) dx |
+| - | 2e^(2x) | (1/3)sin(3x) |
+| + | 4e^(2x) | -(1/9)cos(3x) |
 
-Forbidden phrases:
-- diagonal process
-- last diagonal
-- remaining diagonal
-- produces a term
+Reading directly from the table:
+$$\int e^{2x}\cos(3x)\,dx = \frac{1}{3}e^{2x}\sin(3x) + \frac{2}{9}e^{2x}\cos(3x) - \frac{4}{9}\int e^{2x}\cos(3x)\,dx$$
+
+Bring the remaining integral to the left:
+$$\frac{13}{9}\int e^{2x}\cos(3x)\,dx = \frac{1}{3}e^{2x}\sin(3x) + \frac{2}{9}e^{2x}\cos(3x)$$
+
+Solve:
+$$\int e^{2x}\cos(3x)\,dx = \frac{3}{13}e^{2x}\sin(3x) + \frac{2}{13}e^{2x}\cos(3x) + C$$
 
 TRIGONOMETRIC SUBSTITUTION (THREE TYPES)
 
