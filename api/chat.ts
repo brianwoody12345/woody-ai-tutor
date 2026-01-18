@@ -10,8 +10,8 @@ export const config = {
   },
 };
 
-// Vercel Node Serverless Function (works with Vite frontend)
-// Streams plain text (your UI concatenates chunks as they arrive)
+// Vercel Node Serverless Function
+// Streams plain text (frontend concatenates chunks)
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
@@ -22,11 +22,13 @@ export default async function handler(req: any, res: any) {
     }
 
     const MAX_FILES = 5;
-    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB each
-    const MAX_TEXT_FROM_FILE = 50_000; // chars per text file
+    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB
+    const MAX_TEXT_FROM_FILE = 50_000; // chars
     const MAX_OUTPUT_TOKENS = 2500;
 
-    // ---- Parse body: multipart OR JSON ----
+    // -----------------------------
+    // Parse request body
+    // -----------------------------
     let fields: any = {};
     let files: any = {};
 
@@ -43,14 +45,13 @@ export default async function handler(req: any, res: any) {
 
       ({ fields, files } = await new Promise<{ fields: any; files: any }>(
         (resolve, reject) => {
-         form.parse(req, (err: any, flds: any, fls: any) => {
+          form.parse(req, (err: any, flds: any, fls: any) => {
             if (err) reject(err);
             else resolve({ fields: flds, files: fls });
           });
         }
       ));
     } else {
-      // JSON body
       const raw = await new Promise<string>((resolve, reject) => {
         let data = "";
         req.setEncoding("utf8");
@@ -89,7 +90,9 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // ---- Gather uploaded files (if any) ----
+    // -----------------------------
+    // Gather uploaded files (text only)
+    // -----------------------------
     const fileList: any[] = [];
     for (const key of Object.keys(files || {})) {
       const v = files[key];
@@ -107,6 +110,7 @@ export default async function handler(req: any, res: any) {
     let fileContext = "";
     for (const f of fileList) {
       if (!f) continue;
+
       const filename = f.originalFilename || "upload";
       const mimetype = f.mimetype || "application/octet-stream";
       const size = f.size || 0;
@@ -114,31 +118,31 @@ export default async function handler(req: any, res: any) {
       if (size > MAX_FILE_SIZE_BYTES) {
         res.statusCode = 400;
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end(`File too large: ${filename} (max 3MB)`);
+        res.end(`File too large: ${filename}`);
         return;
       }
 
-      // Only ingest text files for now (no OCR / PDF parsing here).
       if (String(mimetype).startsWith("text/") && f.filepath) {
         try {
           const raw = fs.readFileSync(f.filepath, "utf8");
           const clipped = raw.slice(0, MAX_TEXT_FROM_FILE);
-          fileContext += `\n\n[File: ${filename} | ${mimetype}]\n${clipped}`;
+          fileContext += `\n\n[File: ${filename}]\n${clipped}`;
           if (raw.length > clipped.length) fileContext += "\n[...truncated...]";
         } catch {
           fileContext += `\n\n[File: ${filename}] (Could not read contents)`;
         }
-      } else {
-        fileContext += `\n\n[File: ${filename} | ${mimetype} | ${size} bytes] (Uploaded. Content not parsed yet.)`;
       }
     }
 
-    // ---- Build user content with small toggles context ----
+    // -----------------------------
+    // Build user content
+    // -----------------------------
     const coachingLine = woodyCoaching
       ? "Coaching phrases allowed (sparingly)."
       : "Do not include coaching phrases.";
+
     const setupLine = showSetupFirst
-      ? "Emphasize setup-first: show the setup clearly before computation."
+      ? "Show setup clearly before computation."
       : "Still show setup before computation.";
 
     const userContent =
@@ -148,7 +152,9 @@ export default async function handler(req: any, res: any) {
       `Student question:\n${message}` +
       (fileContext ? `\n\nUploads:\n${fileContext}` : "");
 
-    // ---- Stream response ----
+    // -----------------------------
+    // Prepare streaming response
+    // -----------------------------
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -166,7 +172,13 @@ export default async function handler(req: any, res: any) {
       body: JSON.stringify({
         model,
         stream: true,
-        temperature: 0.2,
+
+        // 🔒 CRITICAL FIX
+        temperature: 0.0,
+        top_p: 1.0,
+        frequency_penalty: 0.0,
+        presence_penalty: 0.0,
+
         max_tokens: MAX_OUTPUT_TOKENS,
         messages: [
           { role: "system", content: systemPrompt || "You are a helpful tutor." },
@@ -177,25 +189,25 @@ export default async function handler(req: any, res: any) {
 
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => "");
-      res.write(
-        `Upstream error (${upstream.status}). ${text ? text.slice(0, 500) : ""}`
-      );
+      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 500)}`);
       res.end();
       return;
     }
 
-    // ---- Parse OpenAI SSE stream and write plain text chunks ----
+    // -----------------------------
+    // Stream OpenAI SSE → client
+    // -----------------------------
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
 
     let buffer = "";
+
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE events are separated by double newlines
       const parts = buffer.split("\n\n");
       buffer = parts.pop() || "";
 
@@ -204,6 +216,7 @@ export default async function handler(req: any, res: any) {
           .split("\n")
           .map((s) => s.trim())
           .find((s) => s.startsWith("data:"));
+
         if (!line) continue;
 
         const data = line.replace(/^data:\s*/, "");
@@ -219,7 +232,7 @@ export default async function handler(req: any, res: any) {
             res.write(delta);
           }
         } catch {
-          // ignore malformed chunks
+          // Ignore malformed chunks
         }
       }
     }
