@@ -43,7 +43,8 @@ function extractProblemBlock(text: string, n: number): string {
 // Conservative trigger for IBP-table mode
 function shouldAllowIbpTable(message: string): boolean {
   const m = message.toLowerCase();
-  if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
+  if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular"))
+    return true;
 
   const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
   const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
@@ -63,7 +64,9 @@ export default async function handler(req: any, res: any) {
 
     const MAX_FILES = 5;
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
-    const MAX_OUTPUT_TOKENS = 2500;
+
+    // ✅ COST CONTROL: lower output tokens (still plenty for Calc 2)
+    const MAX_OUTPUT_TOKENS = 1200;
 
     const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
 
@@ -199,16 +202,16 @@ Structure first. Repetition builds mastery.
       if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
     }
 
-    const contextToSend =
-      extractedProblem || (pdfText ? pdfText.slice(0, 80_000) : "");
+    // ✅ COST CONTROL: only send extracted problem (never send huge PDF chunks)
+    const contextToSend = extractedProblem || "";
 
     const routingInstruction = probMatch
-      ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
+      ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification. If the problem text is not present, ask the student to upload a clearer PDF or specify the full problem statement.`
       : "";
 
     const allowIbpTable = shouldAllowIbpTable(message);
 
-    // 🔥 UPDATED: EXACT table behavior per type
+    // IBP table guardrails (unchanged behavior)
     const tableModeGuardrails = allowIbpTable
       ? `
 IBP TABLE MODE (ONLY if you actually use IBP):
@@ -262,7 +265,8 @@ CORE GUARDRAILS:
     res.setHeader("Connection", "keep-alive");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const model = process.env.OPENAI_MODEL || "gpt-4o";
+    // ✅ COST CONTROL: default to cheaper model when PDFs are involved
+    const model = process.env.OPENAI_MODEL || (hasPdf ? "gpt-4o-mini" : "gpt-4o");
 
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
