@@ -2,7 +2,6 @@
 import formidable from "formidable";
 import fs from "fs";
 import { createRequire } from "module";
-import { WOODY_SYSTEM_PROMPT } from "../src/constants/systemPrompt";
 
 export const runtime = "nodejs";
 
@@ -11,8 +10,6 @@ export const config = {
 };
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfParse: (data: Buffer) => Promise<{ text: string }> = require("pdf-parse");
 
 function collectFiles(files: any): any[] {
   const out: any[] = [];
@@ -24,6 +21,10 @@ function collectFiles(files: any): any[] {
   return out;
 }
 
+/**
+ * Extract a single numbered problem block from text.
+ * Finds "16)" or "16." at the start of a line and captures until next numbered item.
+ */
 function extractProblemBlock(text: string, n: number): string {
   const escaped = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const startRe = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
@@ -51,6 +52,38 @@ export default async function handler(req: any, res: any) {
     const MAX_FILES = 5;
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
     const MAX_OUTPUT_TOKENS = 2500;
+
+    // ✅ Inline prompt here so we avoid cross-folder imports that can crash on Vercel
+    const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
+
+You teach Calculus 2 using structure, repetition, and method selection, not shortcuts.
+
+Tone: calm, confident, instructional.
+Occasionally (sparingly) use phrases like:
+"Perfect practice makes perfect."
+"Repetition builds muscle memory."
+"This is a good problem to practice a few times."
+Never overuse coaching language or interrupt algebra.
+
+ABSOLUTE OUTPUT RULES
+- All math in LaTeX: use $...$ inline and $$...$$ for display.
+- NEVER use tables (no Markdown tables, no ASCII tables, no columns, no pipes |).
+- Do NOT use unicode superscripts like x². Use LaTeX: $x^2$.
+- End every indefinite integral with + C.
+
+IBP RULES
+- Tabular reasoning only, but PRESENTATION must be narrative (no tables).
+- NEVER mention the IBP formula.
+- MUST begin by naming the IBP type explicitly (Type I / II / III).
+- Use: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
+
+Trig Substitution
+- MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
+- Always convert back to x.
+
+You are a private professor, not a calculator.
+Structure first. Repetition builds mastery.
+`;
 
     let fields: any = {};
     let files: any = {};
@@ -108,23 +141,42 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // -------------------------
-    // Extract PDF text
-    // -------------------------
+    // ✅ Only require pdf-parse if we actually have PDFs.
+    // This prevents import-time failures from killing the function.
     const fileList = collectFiles(files);
+    const hasPdf = fileList.some((f) => f?.mimetype === "application/pdf" && f?.filepath);
 
     let pdfText = "";
-    for (const f of fileList) {
-      try {
-        if (!f) continue;
-        if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES) continue;
-        if (f.mimetype !== "application/pdf" || !f.filepath) continue;
 
-        const buf = fs.readFileSync(f.filepath);
-        const parsed = await pdfParse(buf);
-        if (parsed?.text) pdfText += `\n\n${parsed.text}`;
-      } catch {
-        // ignore PDF parse errors
+    if (hasPdf) {
+      // Load pdf-parse inside handler (runtime-safe for ESM projects)
+      let pdfParse: ((data: Buffer) => Promise<{ text: string }>) | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        pdfParse = require("pdf-parse");
+      } catch (e: any) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end(
+          `Server error: could not load pdf-parse.\n` +
+            `Make sure it exists in dependencies.\n` +
+            `${e?.message || e}`
+        );
+        return;
+      }
+
+      for (const f of fileList) {
+        try {
+          if (!f) continue;
+          if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES) continue;
+          if (f.mimetype !== "application/pdf" || !f.filepath) continue;
+
+          const buf = fs.readFileSync(f.filepath);
+          const parsed = await pdfParse(buf);
+          if (parsed?.text) pdfText += `\n\n${parsed.text}`;
+        } catch {
+          // ignore per-file parse errors
+        }
       }
     }
 
@@ -138,27 +190,23 @@ export default async function handler(req: any, res: any) {
       if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
     }
 
-    const contextToSend =
-      extractedProblem ||
-      (pdfText ? pdfText.slice(0, 80_000) : "");
-
-    // ✅ HARD LAST-MILE GUARDRAILS (prevents tables even when model "wants" them)
-    const hardFormattingGuardrails = `
-HARD OUTPUT CONSTRAINTS (must follow):
-- Do NOT output ANY tables (no Markdown tables, no ASCII tables, no columns, no pipes |).
-- For IBP: do NOT show a table; explain tabular reasoning in sentences and present the resulting algebra in LaTeX.
-- Do NOT mention the IBP formula.
-- Always name the IBP type explicitly when using IBP.
-- For trig substitution: explicitly name the matching form first (sqrt(a^2-x^2), sqrt(x^2+a^2), sqrt(x^2-a^2)).
-- Use LaTeX only for math. No unicode superscripts.
+    const hardGuardrails = `
+HARD OUTPUT CONSTRAINTS:
+- NO TABLES of any kind (no | pipes, no columns).
+- If IBP is used: begin by naming Type I/II/III. No IBP formula. Narrative only.
+- If trig substitution is used: explicitly name the matching radical form first.
+- LaTeX for all math. No unicode superscripts.
 `;
+
+    const contextToSend =
+      extractedProblem || (pdfText ? pdfText.slice(0, 80_000) : "");
 
     const routingInstruction = probMatch
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
       : "";
 
     const userContent =
-      `${hardFormattingGuardrails}\n\n` +
+      `${hardGuardrails}\n\n` +
       `${routingInstruction}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
@@ -242,6 +290,7 @@ HARD OUTPUT CONSTRAINTS (must follow):
 
     res.end();
   } catch (err: any) {
+    // ✅ If we get here, the error will be visible in the response
     res.statusCode = 500;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
