@@ -37,8 +37,8 @@ export function ChatArea({ messages, isTyping }: ChatAreaProps) {
             Welcome to Woody Calculus II
           </h2>
           <p className="text-[13px] text-muted-foreground max-w-sm mb-6 leading-relaxed">
-            Your AI Private Professor for Calculus II. Ask about integration techniques, 
-            series convergence, Taylor expansions, and more.
+            Your AI Private Mathematics Professor. Ask about integration techniques, 
+            series convergence, Vector Calculus, and more.
           </p>
           <div className="flex flex-wrap justify-center gap-2 max-w-lg">
             {[
