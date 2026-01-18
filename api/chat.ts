@@ -210,9 +210,7 @@ IBP RULES (always)
 
     const allowIbpTable = shouldAllowIbpTable(message);
 
-    // ✅ Key change:
-    // Encourage the EXACT table format that matches the “perfect” solution,
-    // and avoid over-restricting the model into wrong dv semantics.
+    // ✅ Updated guardrails: force correct sign simplification in row 2 over-and-down.
     const tableModeGuardrails = allowIbpTable
       ? `
 IBP TABLE (ONLY if you actually use IBP):
@@ -227,16 +225,23 @@ REQUIRED TABLE FORMAT (so the UI can render it):
 
 TYPE II (exponential × trig) — match this exact style:
 - dv column shows the trig entries row-by-row like a tabular method:
-  Row 1: original trig with dx (example: \\sin(x)\\,dx)
-  Row 2: first antiderivative (example: -\\cos(x))
-  Row 3: second antiderivative (example: -\\sin(x))
+  Row 1: original trig with dx (example: \\cos(x)\\,dx or \\sin(x)\\,dx)
+  Row 2: first antiderivative (example: \\sin(x) or -\\cos(x))
+  Row 3: second antiderivative (example: -\\cos(x) or -\\sin(x))
 - The u column repeats the exponential each row for Type II.
 
-REQUIRED WORDING AFTER THE TABLE (MUST APPEAR):
+REQUIRED WORDING AFTER THE TABLE (MUST APPEAR EXACTLY ONCE EACH):
 - “Multiply over and down on the first row.”
 - “Multiply over and down on the second row.”
 - “Multiply straight across on the third row to get the last integral.”
 - “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
+
+CRITICAL SIGN RULE (THIS FIXES YOUR CURRENT BUG):
+- In the row-2 bullet, you MUST show the sign multiplication explicitly and simplify it.
+  Write it like this pattern:
+  Row 2 over-and-down: $(-1)(u_2)(dv_3)=\\text{simplified product}$
+  Example (correct): $(-1)e^x(-\\cos x)=+e^x\\cos x$
+  Never leave it as “$-e^x\\cos x$” if it is actually negative times negative.
 
 CRITICAL:
 - Trig antiderivatives must be correct.
@@ -260,7 +265,6 @@ HARD OUTPUT CONSTRAINTS:
       contextToSend = pdfText.slice(0, MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER);
     }
 
-    // If greeting-only, force the exact greeting
     const greetingOverride = isGreetingOnly(message)
       ? `The student message is only a greeting. Reply with exactly: "Welcome to Woody Calculus Clone AI."`
       : "";
