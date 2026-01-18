@@ -18,24 +18,104 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#039;');
 }
 
-function renderCodeCard(codeRaw: string): string {
+type ParsedIbpRow = { sign: string; u: string; dv: string };
+
+function parseIbpAsciiTable(codeRaw: string): { rows: ParsedIbpRow[] } | null {
   const code = String(codeRaw ?? '').trim();
+  const lines = code.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  const looksLikeIbp =
-    /(^|\n)\s*sign\s+u\s+dv\s*($|\n)/i.test(code) ||
-    /(^|\n)\s*sign\s*\|\s*u\s*\|\s*dv/i.test(code);
+  // Must contain header like: "sign u dv" (spaces) OR "sign | u | dv"
+  const headerIdx = lines.findIndex((l) =>
+    /^sign(\s+|\s*\|\s*)u(\s+|\s*\|\s*)dv$/i.test(l)
+  );
+  if (headerIdx === -1) return null;
 
-  const header = looksLikeIbp
-    ? `<div style="
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: hsl(var(--primary));
-        margin-bottom: 10px;
-        opacity: 0.85;
-      ">IBP Tabular Setup</div>`
-    : '';
+  const dataLines = lines.slice(headerIdx + 1);
+
+  const rows: ParsedIbpRow[] = [];
+  for (const l of dataLines) {
+    // expected like: "+   e^x   \cos(x) \, dx"
+    // or with pipes: "| + | e^x | \cos(x) \, dx |"
+    let sign = '';
+    let u = '';
+    let dv = '';
+
+    if (l.includes('|')) {
+      const parts = l
+        .split('|')
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (parts.length >= 3) {
+        sign = parts[0];
+        u = parts[1];
+        dv = parts[2];
+      }
+    } else {
+      // split on 2+ spaces so LaTeX tokens stay intact
+      const parts = l.split(/\s{2,}/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+        sign = parts[0];
+        u = parts[1];
+        dv = parts.slice(2).join(' ');
+      }
+    }
+
+    if (!sign || !u || !dv) continue;
+    if (!/^[+\-]$/.test(sign)) continue;
+
+    rows.push({ sign, u, dv });
+    if (rows.length >= 6) break; // safety
+  }
+
+  // We only “pretty render” if it looks like the 3-row Type II setup (common case)
+  if (rows.length >= 2) return { rows };
+  return null;
+}
+
+function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
+  const rowHtml = rows
+    .slice(0, 3)
+    .map((r) => {
+      const signColor =
+        r.sign === '+'
+          ? 'hsl(var(--primary))'
+          : 'hsl(var(--destructive, 0 84% 60%))';
+
+      return `
+        <div style="
+          display: grid;
+          grid-template-columns: 60px 1fr 1.6fr;
+          gap: 10px;
+          align-items: center;
+          padding: 10px 12px;
+          border-top: 1px solid hsl(var(--border) / 0.55);
+        ">
+          <div style="
+            font-weight: 800;
+            font-size: 14px;
+            text-align: center;
+            color: ${signColor};
+          ">${escapeHtml(r.sign)}</div>
+
+          <div style="
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            color: hsl(var(--foreground));
+            overflow-wrap: anywhere;
+          ">${escapeHtml(r.u)}</div>
+
+          <div style="
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            color: hsl(var(--foreground));
+            overflow-wrap: anywhere;
+          ">${escapeHtml(r.dv)}</div>
+        </div>
+      `;
+    })
+    .join('');
 
   return `
     <div style="
@@ -47,7 +127,64 @@ function renderCodeCard(codeRaw: string): string {
       box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
       overflow: hidden;
     ">
-      ${header}
+      <div style="
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.10em;
+        text-transform: uppercase;
+        color: hsl(var(--primary));
+        margin-bottom: 10px;
+        opacity: 0.85;
+      ">IBP TABULAR SETUP</div>
+
+      <div style="
+        border-radius: 12px;
+        border: 1px solid hsl(var(--border) / 0.55);
+        background: hsl(var(--background) / 0.55);
+        overflow: hidden;
+      ">
+        <div style="
+          display: grid;
+          grid-template-columns: 60px 1fr 1.6fr;
+          gap: 10px;
+          align-items: center;
+          padding: 10px 12px;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.10em;
+          text-transform: uppercase;
+          color: hsl(var(--muted-foreground));
+        ">
+          <div style="text-align:center;">sign</div>
+          <div>u</div>
+          <div>dv</div>
+        </div>
+        ${rowHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderCodeCard(codeRaw: string): string {
+  const code = String(codeRaw ?? '').trim();
+
+  // If it looks like the IBP ascii table, render a pretty table.
+  const parsed = parseIbpAsciiTable(code);
+  if (parsed) {
+    return renderIbpPrettyTable(parsed.rows);
+  }
+
+  // Otherwise: normal code card.
+  return `
+    <div style="
+      margin: 12px 0;
+      padding: 14px 14px;
+      border-radius: 14px;
+      border: 1px solid hsl(var(--border) / 0.7);
+      background: hsl(var(--surface-elevated));
+      box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
+      overflow: hidden;
+    ">
       <pre style="
         margin: 0;
         padding: 12px 12px;
@@ -67,10 +204,7 @@ function renderCodeCard(codeRaw: string): string {
 function renderMathContent(content: string): string {
   let processed = content ?? '';
 
-  // ------------------------------------------------------------
-  // 1) Extract fenced code blocks FIRST and replace with placeholders
-  //    so KaTeX never touches code blocks.
-  // ------------------------------------------------------------
+  // 1) Extract fenced code blocks FIRST
   const codeBlocks: string[] = [];
   processed = processed.replace(/```([\s\S]*?)```/g, (_, code) => {
     const idx = codeBlocks.length;
@@ -78,11 +212,7 @@ function renderMathContent(content: string): string {
     return `@@CODEBLOCK_${idx}@@`;
   });
 
-  // ------------------------------------------------------------
-  // 2) KaTeX rendering (ONLY on non-code content)
-  // ------------------------------------------------------------
-
-  // Display math: \[...\]
+  // 2) KaTeX rendering (non-code only)
   processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
@@ -94,7 +224,6 @@ function renderMathContent(content: string): string {
     }
   });
 
-  // Display math: $$...$$
   processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
     try {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
@@ -106,7 +235,6 @@ function renderMathContent(content: string): string {
     }
   });
 
-  // Inline math: \(...\)
   processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
     try {
       return katex.renderToString(String(math).trim(), {
@@ -118,7 +246,6 @@ function renderMathContent(content: string): string {
     }
   });
 
-  // Inline math: $...$
   processed = processed.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
     try {
       return katex.renderToString(String(math).trim(), {
@@ -136,9 +263,7 @@ function renderMathContent(content: string): string {
   // Newlines -> <br>
   processed = processed.replace(/\n/g, '<br>');
 
-  // ------------------------------------------------------------
-  // 3) Put code blocks back at the very end
-  // ------------------------------------------------------------
+  // 3) Put code blocks back at the end
   processed = processed.replace(/@@CODEBLOCK_(\d+)@@/g, (_, nStr) => {
     const n = Number(nStr);
     const code = codeBlocks[n] ?? '';
