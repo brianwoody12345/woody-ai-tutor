@@ -40,6 +40,18 @@ function extractProblemBlock(text: string, n: number): string {
   return text.slice(startIdx, endIdx).trim();
 }
 
+// Conservative trigger for allowing IBP-table mode
+function shouldAllowIbpTable(message: string): boolean {
+  const m = message.toLowerCase();
+  if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
+
+  const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
+  const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
+  const hasExp = /\be\^|\bexp\b/.test(m);
+  const hasLn = /\bln\b|\blog\b/.test(m);
+  return hasPoly && (hasTrig || hasExp || hasLn);
+}
+
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
@@ -51,7 +63,51 @@ export default async function handler(req: any, res: any) {
 
     const MAX_FILES = 5;
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
-    const MAX_OUTPUT_TOKENS = 1800; // 🔻 cost control (was 2500)
+
+    // Cost control:
+    const MAX_OUTPUT_TOKENS = 1400; // lower = cheaper
+    const MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER = 0; // do not send whole PDF unless "problem ##"
+    const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
+
+    // ✅ Inline prompt here to avoid cross-folder imports that can crash on Vercel
+    const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
+
+IDENTITY (STRICT)
+- Display name: Professor Woody AI Clone
+- You are not ChatGPT. You are not a generic tutor.
+
+GREETING RULE (CRITICAL)
+- ONLY greet if the student’s message is a greeting (examples: "hi", "hello", "hey", "good morning", "what’s up").
+- If the student asks ANY math question (examples: "integrate ...", "solve ...", "find the sum ...", "do problem 16"), DO NOT greet.
+- For math questions, begin immediately with the method + setup. No welcome line.
+- If you DO greet, say exactly: "Welcome to Woody Calculus Clone AI."
+- Never say: "Welcome to Calculus II"
+- Never say: "How can I help you today?"
+
+Tone: calm, confident, instructional.
+Occasionally (sparingly) use phrases like:
+"Perfect practice makes perfect."
+"Repetition builds muscle memory."
+"This is a good problem to practice a few times."
+Never overuse coaching language or interrupt algebra.
+
+ABSOLUTE OUTPUT RULES
+- All math must be in LaTeX: use $...$ inline and $$...$$ for display.
+- Do NOT use unicode superscripts like x². Use LaTeX: $x^2$.
+- End every indefinite integral with + C.
+
+IBP RULES
+- Tabular reasoning only (no IBP formula).
+- MUST begin by naming the IBP type explicitly (Type I / II / III).
+- Required language: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
+
+Trig Substitution
+- MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
+- Always convert back to x.
+
+You are a private professor, not a calculator.
+Structure first. Repetition builds mastery.
+`;
 
     let fields: any = {};
     let files: any = {};
@@ -67,14 +123,12 @@ export default async function handler(req: any, res: any) {
         allowEmptyFiles: true,
       });
 
-      ({ fields, files } = await new Promise<{ fields: any; files: any }>(
-        (resolve, reject) => {
-          form.parse(req, (err: any, flds: any, fls: any) => {
-            if (err) reject(err);
-            else resolve({ fields: flds, files: fls });
-          });
-        }
-      ));
+      ({ fields, files } = await new Promise<{ fields: any; files: any }>((resolve, reject) => {
+        form.parse(req, (err: any, flds: any, fls: any) => {
+          if (err) reject(err);
+          else resolve({ fields: flds, files: fls });
+        });
+      }));
     } else {
       const raw = await new Promise<string>((resolve, reject) => {
         let data = "";
@@ -109,27 +163,18 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // ✅ USE the system prompt sent from the frontend (Index.tsx)
-    const systemPromptFromClient = String(fields.systemPrompt ?? "").trim();
-
-    // Fallback prompt if none provided (kept short)
-    const fallbackSystemPrompt = `You are Professor Woody AI Clone. When greeting, start with: "Welcome to Woody Calculus Clone AI." Never say "Welcome to Calculus II".`;
-
-    const SYSTEM_PROMPT = systemPromptFromClient || fallbackSystemPrompt;
-
-    // -----------------------------
-    // PDF parsing (only if PDFs uploaded)
-    // -----------------------------
+    // -------------------------
+    // Parse PDFs (only if present)
+    // -------------------------
     const fileList = collectFiles(files);
-    const hasPdf = fileList.some(
-      (f) => f?.mimetype === "application/pdf" && f?.filepath
-    );
+    const hasPdf = fileList.some((f) => f?.mimetype === "application/pdf" && f?.filepath);
 
     let pdfText = "";
 
     if (hasPdf) {
       let pdfParse: ((data: Buffer) => Promise<{ text: string }>) | null = null;
       try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         pdfParse = require("pdf-parse");
       } catch (e: any) {
         res.statusCode = 500;
@@ -157,9 +202,10 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // -----------------------------
-    // Problem extraction ("do problem 16")
-    // -----------------------------
+    // -------------------------
+    // If user asked for "problem ##", extract only that block.
+    // Otherwise do NOT send the whole PDF (cost control).
+    // -------------------------
     const probMatch =
       message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
       message.match(/\bproblem\s+(\d+)\b/i);
@@ -170,25 +216,63 @@ export default async function handler(req: any, res: any) {
       if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
     }
 
-    const contextToSend =
-      extractedProblem || (pdfText ? pdfText.slice(0, 80_000) : "");
+    const allowIbpTable = shouldAllowIbpTable(message);
+
+    const tableModeGuardrails = allowIbpTable
+      ? `
+IBP TABLE MODE (ONLY if you actually use IBP):
+- You may include tables ONLY for IBP, and NEVER more than ONE table total.
+- ALWAYS state the IBP type first (Type I / Type II / Type III).
+
+Type II (exponential × trig) — EXACT requirements:
+- Produce EXACTLY ONE 3-row Markdown table with columns: sign | u | dv
+- Rows must be: + then − then +
+- The 3rd row is the “straight across” row that produces the last integral.
+- Do NOT create a second table. Do NOT say “apply IBP again.” Do NOT restart with a new table.
+- After the single table:
+  - Say: “Multiply over and down on the first row.”
+  - Say: “Multiply over and down on the second row.”
+  - Say: “Multiply straight across on the third row to get the last integral.”
+  - Then: “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
+
+Type I (polynomial × trig/exponential) — EXACT requirements:
+- You may show one Markdown table if desired, but the final answer must be ONLY the sum of over-and-down products.
+- Do NOT write extra integrals like “−∫ … + ∫ … − ∫ …”. No recursion.
+- Do NOT say “solve using IBP again.” Just finish from the tabular products.
+
+Type III (ln or inverse trig) — requirements:
+- One table max. Row 1 over-and-down, Row 2 straight across. Evaluate remaining integral directly.
+`
+      : `
+HARD OUTPUT CONSTRAINTS:
+- Do NOT output any tables (no Markdown tables, no ASCII tables, no columns).
+`;
+
+    const coreGuardrails = `
+CORE GUARDRAILS:
+- If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
+- If trig substitution is used: explicitly name the matching radical form first.
+- LaTeX for all math. No unicode superscripts.
+- If the student message is a greeting only, use the required greeting line exactly and stop.
+`;
 
     const routingInstruction = probMatch
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
-      : "";
+      : hasPdf
+        ? `A homework PDF is attached. For cost control, do NOT summarize the entire PDF. If the student did not specify a problem number, ask them to say "do problem ##" (or paste the exact problem text).`
+        : ``;
 
-    // ✅ Greeting Guard: prevents "Welcome to Calculus II" forever
-    const greetingGuard = `
-GREETING GUARD (STRICT):
-If the student message is a greeting (hello/hi/hey/whats up), your reply MUST begin with EXACTLY:
-Welcome to Woody Calculus Clone AI.
-Then ask:
-What problem are you working on?
-Never mention "Calculus II".
-`;
+    // Context decision (cost control)
+    let contextToSend = "";
+    if (extractedProblem) {
+      contextToSend = extractedProblem.slice(0, MAX_PDF_CHARS_IF_PROBLEM_NUMBER);
+    } else if (pdfText && MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER > 0) {
+      contextToSend = pdfText.slice(0, MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER);
+    }
 
     const userContent =
-      `${greetingGuard}\n` +
+      `${tableModeGuardrails}\n` +
+      `${coreGuardrails}\n\n` +
       `${routingInstruction}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
@@ -219,7 +303,7 @@ Never mention "Calculus II".
         presence_penalty: 0.0,
         max_tokens: MAX_OUTPUT_TOKENS,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: WOODY_SYSTEM_PROMPT },
           { role: "user", content: userContent },
         ],
       }),
@@ -227,7 +311,7 @@ Never mention "Calculus II".
 
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => "");
-      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1000)}`);
+      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1200)}`);
       res.end();
       return;
     }
