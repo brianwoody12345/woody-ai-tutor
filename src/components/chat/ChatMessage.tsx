@@ -10,7 +10,7 @@ interface ChatMessageProps {
 }
 
 function escapeHtml(s: string): string {
-  return s
+  return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -20,66 +20,89 @@ function escapeHtml(s: string): string {
 
 type ParsedIbpRow = { sign: string; u: string; dv: string };
 
+function stripMathDelimiters(s: string): string {
+  const t = String(s ?? '').trim();
+  // strip $...$ if present
+  if (t.startsWith('$$') && t.endsWith('$$')) return t.slice(2, -2).trim();
+  if (t.startsWith('$') && t.endsWith('$')) return t.slice(1, -1).trim();
+  return t;
+}
+
+function renderInlineLatexOrText(raw: string, opts?: { color?: string; displayMode?: boolean }): string {
+  const color = opts?.color;
+  const displayMode = !!opts?.displayMode;
+
+  const tex = stripMathDelimiters(raw);
+
+  // If it looks like LaTeX, try KaTeX. If not, fall back to escaped text.
+  const looksLatex =
+    /\\[a-zA-Z]+/.test(tex) ||
+    /[_^{}]/.test(tex) ||
+    /\\frac|\\sin|\\cos|\\tan|\\ln|\\int|\\sqrt|\\cdot|\\left|\\right/.test(tex);
+
+  if (!looksLatex) {
+    const safe = escapeHtml(raw);
+    return color ? `<span style="color:${color};">${safe}</span>` : safe;
+  }
+
+  try {
+    const html = katex.renderToString(tex, { throwOnError: false, displayMode });
+    return color ? `<span style="color:${color};">${html}</span>` : html;
+  } catch {
+    const safe = escapeHtml(raw);
+    return color ? `<span style="color:${color};">${safe}</span>` : safe;
+  }
+}
+
 function parseIbpAsciiTable(codeRaw: string): { rows: ParsedIbpRow[] } | null {
   const code = String(codeRaw ?? '').trim();
   const lines = code.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // Must contain header like: "sign u dv" (spaces) OR "sign | u | dv"
-  const headerIdx = lines.findIndex((l) =>
-    /^sign(\s+|\s*\|\s*)u(\s+|\s*\|\s*)dv$/i.test(l)
-  );
+  // Must contain header: "sign | u | dv"
+  const headerIdx = lines.findIndex((l) => /^sign\s*\|\s*u\s*\|\s*dv$/i.test(l));
   if (headerIdx === -1) return null;
 
   const dataLines = lines.slice(headerIdx + 1);
 
   const rows: ParsedIbpRow[] = [];
   for (const l of dataLines) {
-    // expected like: "+   e^x   \cos(x) \, dx"
-    // or with pipes: "| + | e^x | \cos(x) \, dx |"
-    let sign = '';
-    let u = '';
-    let dv = '';
+    if (!l.includes('|')) continue;
 
-    if (l.includes('|')) {
-      const parts = l
-        .split('|')
-        .map((p) => p.trim())
-        .filter(Boolean);
-      if (parts.length >= 3) {
-        sign = parts[0];
-        u = parts[1];
-        dv = parts[2];
-      }
-    } else {
-      // split on 2+ spaces so LaTeX tokens stay intact
-      const parts = l.split(/\s{2,}/).map((p) => p.trim()).filter(Boolean);
-      if (parts.length >= 3) {
-        sign = parts[0];
-        u = parts[1];
-        dv = parts.slice(2).join(' ');
-      }
-    }
+    const parts = l
+      .split('|')
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    if (parts.length < 3) continue;
+
+    const sign = parts[0];
+    const u = parts[1];
+    const dv = parts.slice(2).join(' | '); // keep any extra pipes safely
 
     if (!sign || !u || !dv) continue;
     if (!/^[+\-]$/.test(sign)) continue;
 
     rows.push({ sign, u, dv });
-    if (rows.length >= 6) break; // safety
+    if (rows.length >= 6) break;
   }
 
-  // We only “pretty render” if it looks like the 3-row Type II setup (common case)
+  // We “pretty render” if it has at least 2 rows; Type II usually has 3
   if (rows.length >= 2) return { rows };
   return null;
 }
 
 function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
-  const rowHtml = rows
-    .slice(0, 3)
+  const rows3 = rows.slice(0, 3);
+
+  const rowHtml = rows3
     .map((r) => {
       const signColor =
         r.sign === '+'
           ? 'hsl(var(--primary))'
           : 'hsl(var(--destructive, 0 84% 60%))';
+
+      const uHtml = renderInlineLatexOrText(r.u);
+      const dvHtml = renderInlineLatexOrText(r.dv, { color: '#1dd3c5' });
 
       return `
         <div style="
@@ -87,35 +110,64 @@ function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
           grid-template-columns: 60px 1fr 1.6fr;
           gap: 10px;
           align-items: center;
-          padding: 10px 12px;
+          padding: 12px 12px;
           border-top: 1px solid hsl(var(--border) / 0.55);
+          position: relative;
+          z-index: 2;
         ">
           <div style="
-            font-weight: 800;
+            font-weight: 900;
             font-size: 14px;
             text-align: center;
             color: ${signColor};
           ">${escapeHtml(r.sign)}</div>
 
           <div style="
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
             font-size: 14px;
-            line-height: 1.5;
+            line-height: 1.6;
             color: hsl(var(--foreground));
             overflow-wrap: anywhere;
-          ">${escapeHtml(r.u)}</div>
+          ">${uHtml}</div>
 
           <div style="
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
             font-size: 14px;
-            line-height: 1.5;
-            color: hsl(var(--foreground));
+            line-height: 1.6;
             overflow-wrap: anywhere;
-          ">${escapeHtml(r.dv)}</div>
+          ">${dvHtml}</div>
         </div>
       `;
     })
     .join('');
+
+  // SVG overlay arrows to mimic the TikZ look (green diagonals + red straight-across)
+  // ViewBox: 0..100
+  const arrowsSvg = `
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+      opacity: 0.95;
+    ">
+      <defs>
+        <marker id="arrowG" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#37b24d"></path>
+        </marker>
+        <marker id="arrowR" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#ff3b3b"></path>
+        </marker>
+      </defs>
+
+      <!-- green diagonals: between u and dv columns -->
+      <path d="M 56 36 L 68 52" stroke="#37b24d" stroke-width="2.5" fill="none" marker-end="url(#arrowG)"></path>
+      <path d="M 56 57 L 68 73" stroke="#37b24d" stroke-width="2.5" fill="none" marker-end="url(#arrowG)"></path>
+
+      <!-- red straight-across near bottom -->
+      <path d="M 36 94 L 92 94" stroke="#ff3b3b" stroke-width="3" fill="none" marker-end="url(#arrowR)"></path>
+    </svg>
+  `;
 
   return `
     <div style="
@@ -126,10 +178,11 @@ function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
       background: hsl(var(--surface-elevated));
       box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
       overflow: hidden;
+      position: relative;
     ">
       <div style="
         font-size: 11px;
-        font-weight: 800;
+        font-weight: 900;
         letter-spacing: 0.10em;
         text-transform: uppercase;
         color: hsl(var(--primary));
@@ -142,7 +195,10 @@ function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
         border: 1px solid hsl(var(--border) / 0.55);
         background: hsl(var(--background) / 0.55);
         overflow: hidden;
+        position: relative;
       ">
+        ${arrowsSvg}
+
         <div style="
           display: grid;
           grid-template-columns: 60px 1fr 1.6fr;
@@ -150,15 +206,18 @@ function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
           align-items: center;
           padding: 10px 12px;
           font-size: 11px;
-          font-weight: 800;
+          font-weight: 900;
           letter-spacing: 0.10em;
           text-transform: uppercase;
           color: hsl(var(--muted-foreground));
+          position: relative;
+          z-index: 2;
         ">
           <div style="text-align:center;">sign</div>
           <div>u</div>
           <div>dv</div>
         </div>
+
         ${rowHtml}
       </div>
     </div>
