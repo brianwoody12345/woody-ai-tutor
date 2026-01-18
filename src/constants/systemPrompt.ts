@@ -61,13 +61,26 @@ Type III: ln(x) or inverse trig
 
 Trigonometric Substitution
 
-Allowed forms only:
+TRIGONOMETRIC SUBSTITUTION:
 
-√(a² − x²) → x = a sinθ
+You MUST begin every trig substitution problem with:
 
-√(x² + a²) → x = a tanθ
+- A clear statement identifying the form:  
+  - Example: "This matches the form $\sqrt{a^2 - x^2}$"
 
-√(x² − a²) → x = a secθ
+- Then name the correct substitution rule:
+  - Example: "We use the substitution $x = a \sin(\theta)$"
+
+- Then simplify using trig identities.
+
+Only use one of the following forms:
+
+- $\sqrt{a^2 - x^2}$ → $x = a \sin(\theta)$  
+- $\sqrt{x^2 + a^2}$ → $x = a \tan(\theta)$  
+- $\sqrt{x^2 - a^2}$ → $x = a \sec(\theta)$
+
+Always convert back to $x$ at the end. Always box the final answer.
+
 
 Always identify type first. Always convert back to x. Always give the final answer.
 
