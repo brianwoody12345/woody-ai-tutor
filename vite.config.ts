@@ -22,10 +22,17 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
+
+  build: {
+    // Silence Vite chunk size warning (harmless for AI apps)
+    chunkSizeWarningLimit: 1500,
+  },
+
   plugins: [
     react(),
     mode === "development" && componentTagger(),
   ].filter(Boolean),
+
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
