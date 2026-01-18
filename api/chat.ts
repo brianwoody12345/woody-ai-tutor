@@ -10,7 +10,6 @@ export const config = {
   api: { bodyParser: false },
 };
 
-// ESM-safe require() for pdf-parse
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdfParse: (data: Buffer) => Promise<{ text: string }> = require("pdf-parse");
@@ -25,10 +24,6 @@ function collectFiles(files: any): any[] {
   return out;
 }
 
-/**
- * Extract a single numbered problem block from text.
- * Finds "16)" or "16." at the start of a line and captures until next numbered item.
- */
 function extractProblemBlock(text: string, n: number): string {
   const escaped = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const startRe = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
@@ -38,7 +33,6 @@ function extractProblemBlock(text: string, n: number): string {
   const startIdx = m.index + (m[1] ? m[1].length : 0);
   const rest = text.slice(startIdx);
 
-  // next problem number pattern
   const nextIdx = rest.slice(1).search(/\n\s*\d+\s*[\)\.]\s*/m);
   const endIdx = nextIdx === -1 ? text.length : startIdx + 1 + nextIdx;
 
@@ -115,7 +109,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // -------------------------
-    // Extract PDF text from uploads
+    // Extract PDF text
     // -------------------------
     const fileList = collectFiles(files);
 
@@ -130,13 +124,10 @@ export default async function handler(req: any, res: any) {
         const parsed = await pdfParse(buf);
         if (parsed?.text) pdfText += `\n\n${parsed.text}`;
       } catch {
-        // swallow PDF parsing errors so function still works for non-PDF or partial failures
+        // ignore PDF parse errors
       }
     }
 
-    // -------------------------
-    // If user says "do problem 16", extract ONLY that problem
-    // -------------------------
     const probMatch =
       message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
       message.match(/\bproblem\s+(\d+)\b/i);
@@ -151,11 +142,23 @@ export default async function handler(req: any, res: any) {
       extractedProblem ||
       (pdfText ? pdfText.slice(0, 80_000) : "");
 
+    // ✅ HARD LAST-MILE GUARDRAILS (prevents tables even when model "wants" them)
+    const hardFormattingGuardrails = `
+HARD OUTPUT CONSTRAINTS (must follow):
+- Do NOT output ANY tables (no Markdown tables, no ASCII tables, no columns, no pipes |).
+- For IBP: do NOT show a table; explain tabular reasoning in sentences and present the resulting algebra in LaTeX.
+- Do NOT mention the IBP formula.
+- Always name the IBP type explicitly when using IBP.
+- For trig substitution: explicitly name the matching form first (sqrt(a^2-x^2), sqrt(x^2+a^2), sqrt(x^2-a^2)).
+- Use LaTeX only for math. No unicode superscripts.
+`;
+
     const routingInstruction = probMatch
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
       : "";
 
     const userContent =
+      `${hardFormattingGuardrails}\n\n` +
       `${routingInstruction}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
@@ -239,7 +242,6 @@ export default async function handler(req: any, res: any) {
 
     res.end();
   } catch (err: any) {
-    // Make the failure visible (so you can actually fix it)
     res.statusCode = 500;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
