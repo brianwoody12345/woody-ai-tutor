@@ -56,7 +56,6 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
   }, []);
 
   const handleSend = useCallback(() => {
-    // ✅ Hard stop if streaming/loading
     if (isLoading) return;
 
     const trimmedMessage = message.trim();
@@ -64,19 +63,16 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
     onSend(trimmedMessage, files);
 
+    // ✅ Clear only the message. Keep files attached until the student removes them.
     setMessage('');
-    setFiles([]);
 
-    // optional: keep focus in the box after send
     textareaRef.current?.focus();
   }, [message, files, onSend, isLoading]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        // ✅ Don’t submit while loading (prevents double API calls)
         if (isLoading) return;
-
         e.preventDefault();
         handleSend();
       }
@@ -93,6 +89,13 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
             {files.map((file) => (
               <FileChip key={file.id} file={file} onRemove={handleRemoveFile} />
             ))}
+
+            {/* ✅ Small hint so students understand files stay attached */}
+            <div className="w-full">
+              <p className="text-[10px] text-muted-foreground/60 mt-1.5 font-medium">
+                Files stay attached for follow-up questions until you remove them.
+              </p>
+            </div>
           </div>
         )}
       </AnimatePresence>
