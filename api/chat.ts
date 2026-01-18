@@ -19,14 +19,14 @@ export default async function handler(req: any, res: any) {
     }
 
     const MAX_FILES = 5;
-    const MAX_FILE_SIZE = 3 * 1024 * 1024;
+    const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3 MB
     const MAX_TOKENS = 2500;
 
     let fields: any = {};
     let files: any = {};
 
     // -------------------------
-    // Parse request
+    // Parse request body
     // -------------------------
     const isMultipart =
       String(req.headers["content-type"] || "").includes("multipart/form-data");
@@ -38,12 +38,14 @@ export default async function handler(req: any, res: any) {
         maxFileSize: MAX_FILE_SIZE,
       });
 
-      ({ fields, files } = await new Promise((resolve, reject) => {
-        form.parse(req, (err, flds, fls) => {
-          if (err) reject(err);
-          else resolve({ fields: flds, files: fls });
-        });
-      }));
+      ({ fields, files } = await new Promise<{ fields: any; files: any }>(
+        (resolve, reject) => {
+          form.parse(req, (err, flds, fls) => {
+            if (err) reject(err);
+            else resolve({ fields: flds, files: fls });
+          });
+        }
+      ));
     } else {
       const raw = await new Promise<string>((resolve) => {
         let data = "";
@@ -121,7 +123,7 @@ ${extractedText}
 `;
 
     // -------------------------
-    // Stream response
+    // Stream response to client
     // -------------------------
     res.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
@@ -148,7 +150,7 @@ ${extractedText}
               role: "system",
               content:
                 systemPrompt ||
-                "You are a private math professor. Use LaTeX for all math.",
+                "You are a private math professor. Use LaTeX for all math. Solve homework problems fully.",
             },
             { role: "user", content: userContent },
           ],
@@ -189,7 +191,9 @@ ${extractedText}
           const json = JSON.parse(data);
           const delta = json.choices?.[0]?.delta?.content;
           if (delta) res.write(delta);
-        } catch {}
+        } catch {
+          // ignore malformed chunks
+        }
       }
     }
 
