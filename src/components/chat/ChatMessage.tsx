@@ -9,7 +9,6 @@ interface ChatMessageProps {
   message: ChatMessageType;
 }
 
-// Small HTML escape for safe <pre> blocks
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -19,62 +18,68 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#039;');
 }
 
+function renderCodeCard(codeRaw: string): string {
+  const code = String(codeRaw ?? '').trim();
+
+  const looksLikeIbp =
+    /(^|\n)\s*sign\s+u\s+dv\s*($|\n)/i.test(code) ||
+    /(^|\n)\s*sign\s*\|\s*u\s*\|\s*dv/i.test(code);
+
+  const header = looksLikeIbp
+    ? `<div style="
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: hsl(var(--primary));
+        margin-bottom: 10px;
+        opacity: 0.85;
+      ">IBP Tabular Setup</div>`
+    : '';
+
+  return `
+    <div style="
+      margin: 12px 0;
+      padding: 14px 14px;
+      border-radius: 14px;
+      border: 1px solid hsl(var(--border) / 0.7);
+      background: hsl(var(--surface-elevated));
+      box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
+      overflow: hidden;
+    ">
+      ${header}
+      <pre style="
+        margin: 0;
+        padding: 12px 12px;
+        border-radius: 12px;
+        border: 1px solid hsl(var(--border) / 0.55);
+        background: hsl(var(--background) / 0.55);
+        overflow-x: auto;
+        font-size: 14px;
+        line-height: 1.6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        white-space: pre;
+      "><code>${escapeHtml(code)}</code></pre>
+    </div>
+  `;
+}
+
 function renderMathContent(content: string): string {
   let processed = content ?? '';
 
   // ------------------------------------------------------------
-  // 1) FENCED CODE BLOCKS ```...```  → render as a styled <pre>
-  //    This is what your "table" currently is.
+  // 1) Extract fenced code blocks FIRST and replace with placeholders
+  //    so KaTeX never touches code blocks.
   // ------------------------------------------------------------
-  processed = processed.replace(/```([\s\S]*?)```/g, (_, codeRaw) => {
-    const code = String(codeRaw ?? '').trim();
-
-    // Detect your IBP tabular block
-    const looksLikeIbp =
-      /(^|\n)\s*sign\s+u\s+dv\s*($|\n)/i.test(code) ||
-      /(^|\n)\s*sign\s*\|\s*u\s*\|\s*dv/i.test(code);
-
-    const header = looksLikeIbp
-      ? `<div style="
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: hsl(var(--primary));
-          margin-bottom: 10px;
-          opacity: 0.85;
-        ">IBP Tabular Setup</div>`
-      : '';
-
-    return `
-      <div style="
-        margin: 12px 0;
-        padding: 14px 14px;
-        border-radius: 14px;
-        border: 1px solid hsl(var(--border) / 0.7);
-        background: hsl(var(--surface-elevated));
-        box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
-        overflow: hidden;
-      ">
-        ${header}
-        <pre style="
-          margin: 0;
-          padding: 12px 12px;
-          border-radius: 12px;
-          border: 1px solid hsl(var(--border) / 0.55);
-          background: hsl(var(--background) / 0.55);
-          overflow-x: auto;
-          font-size: 14px;
-          line-height: 1.6;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-          white-space: pre;
-        "><code>${escapeHtml(code)}</code></pre>
-      </div>
-    `;
+  const codeBlocks: string[] = [];
+  processed = processed.replace(/```([\s\S]*?)```/g, (_, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(String(code ?? ''));
+    return `@@CODEBLOCK_${idx}@@`;
   });
 
   // ------------------------------------------------------------
-  // 2) KaTeX blocks
+  // 2) KaTeX rendering (ONLY on non-code content)
   // ------------------------------------------------------------
 
   // Display math: \[...\]
@@ -125,11 +130,20 @@ function renderMathContent(content: string): string {
     }
   });
 
-  // Markdown-style bold **text**
+  // Bold **text**
   processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
-  // Newlines -> <br> (after code blocks have been handled)
+  // Newlines -> <br>
   processed = processed.replace(/\n/g, '<br>');
+
+  // ------------------------------------------------------------
+  // 3) Put code blocks back at the very end
+  // ------------------------------------------------------------
+  processed = processed.replace(/@@CODEBLOCK_(\d+)@@/g, (_, nStr) => {
+    const n = Number(nStr);
+    const code = codeBlocks[n] ?? '';
+    return renderCodeCard(code);
+  });
 
   return processed;
 }
