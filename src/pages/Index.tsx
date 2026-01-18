@@ -3,7 +3,6 @@ import { Sidebar } from '@/components/chat/Sidebar';
 import { TopBar } from '@/components/chat/TopBar';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { ChatInput } from '@/components/chat/ChatInput';
-import { WOODY_SYSTEM_PROMPT } from '@/constants/systemPrompt';
 import type { ChatMessage, TopicId, UploadedFile } from '@/types/chat';
 
 export default function Index() {
@@ -59,7 +58,9 @@ export default function Index() {
         timestamp: new Date(),
       };
 
-      setMessages((prev) => [...prev, userMessage]);
+      // Add user message to state
+      const updatedMessages = [...messages, userMessage];
+      setMessages(updatedMessages);
 
       // Show typing indicator while we wait for first bytes back
       setIsTyping(true);
@@ -69,20 +70,25 @@ export default function Index() {
       abortRef.current = controller;
 
       try {
-        const formData = new FormData();
-        formData.append('message', trimmed);
-        formData.append('systemPrompt', WOODY_SYSTEM_PROMPT);
-        formData.append('topic', activeTopic);
-        formData.append('showSetupFirst', String(showSetupFirst));
-        formData.append('woodyCoaching', String(woodyCoaching));
+        // Build conversation history for context
+        const conversationHistory = updatedMessages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
 
-        files.forEach((file, index) => {
-          formData.append(`file_${index}`, file.file);
-        });
-
+        // Send as JSON with full conversation history
         const response = await fetch('/api/chat', {
           method: 'POST',
-          body: formData,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: trimmed,
+            messages: conversationHistory,
+            topic: activeTopic,
+            showSetupFirst,
+            woodyCoaching,
+          }),
           signal: controller.signal,
         });
 
@@ -138,17 +144,17 @@ export default function Index() {
         // Stop typing indicator
         setIsTyping(false);
 
-        const errorMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content:
-            error instanceof Error
-              ? `Server error: ${error.message}`
-              : 'I apologize, but I encountered an error. Please try again.',
-          timestamp: new Date(),
-        };
+        // Only show error if not aborted
+        if (error instanceof Error && error.name !== 'AbortError') {
+          const errorMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: `Server error: ${error.message}`,
+            timestamp: new Date(),
+          };
 
-        setMessages((prev) => [...prev, errorMessage]);
+          setMessages((prev) => [...prev, errorMessage]);
+        }
       } finally {
         // ✅ Release lock no matter what
         abortRef.current = null;
@@ -156,7 +162,7 @@ export default function Index() {
         setIsBusy(false);
       }
     },
-    [activeTopic, showSetupFirst, woodyCoaching, isBusy]
+    [messages, activeTopic, showSetupFirst, woodyCoaching, isBusy]
   );
 
   return (
