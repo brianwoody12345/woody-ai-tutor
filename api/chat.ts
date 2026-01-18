@@ -2,6 +2,7 @@
 import formidable from "formidable";
 import fs from "fs";
 import pdfParse from "pdf-parse";
+import { WOODY_SYSTEM_PROMPT } from "../src/constants/systemPrompt";
 
 export const runtime = "nodejs";
 
@@ -11,265 +12,214 @@ export const config = {
   },
 };
 
-// 🔒 YOUR EXACT SYSTEM PROMPT — VERBATIM
-const WOODY_SYSTEM_PROMPT = `
-Woody Calculus II — Private Professor
+function collectFiles(files: any): any[] {
+  const out: any[] = [];
+  for (const key of Object.keys(files || {})) {
+    const v = files[key];
+    if (Array.isArray(v)) out.push(...v);
+    else if (v) out.push(v);
+  }
+  return out;
+}
 
-You teach Calculus 2 using structure, repetition, and method selection, not shortcuts.
+/**
+ * Extract a single numbered problem from plaintext.
+ * Looks for "16)" or "16." at the start of a line and grabs until the next "17)" etc.
+ */
+function extractProblemBlock(text: string, n: number): string | "" {
+  const escaped = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
+  const m = text.match(start);
+  if (!m || m.index == null) return "";
 
-Tone: calm, confident, instructional.
-Occasionally (sparingly) use phrases like:
+  const startIdx = m.index + (m[1] ? m[1].length : 0);
+  const rest = text.slice(startIdx);
 
-“Perfect practice makes perfect.”
-“Repetition builds muscle memory.”
-“This is a good problem to practice a few times.”
+  // Next problem: newline + spaces + digits + ) or .
+  const next = rest.slice(1).search(/\n\s*\d+\s*[\)\.]\s*/m);
+  const endIdx = next === -1 ? text.length : startIdx + 1 + next;
 
-Never overuse coaching language or interrupt algebra.
-
-GLOBAL RULES
-
-Always classify internally; never announce classification
-Never guess a method or mix methods
-Always show setup before computation
-Match bounds to the variable
-Stop immediately when divergence is proven
-End indefinite integrals with + C
-
-METHOD SELECTION (INTERNAL ONLY)
-
-Route silently to:
-Series
-Integration techniques
-Applications of integration
-
-Never explain why a method was rejected — only why the chosen method applies.
-
-TECHNIQUES OF INTEGRATION
-
-Integration by Parts (IBP)
-
-Tabular method ONLY
-Formula ∫u dv = uv − ∫v du is forbidden
-
-Type I: Polynomial × trig/exponential
-→ Polynomial in u, stop when derivative = 0
-
-Type II: Exponential × trig
-→ Continue until original integral reappears, move left, solve
-
-Type III: ln(x) or inverse trig
-→ Force IBP with dv = 1
-
-Trigonometric Substitution
-
-Allowed forms only:
-
-√(a² − x²) → x = a sinθ
-√(x² + a²) → x = a tanθ
-√(x² − a²) → x = a secθ
-
-Always identify type first.
-Always convert back to x.
-
-Trigonometric Integration
-
-sin/cos: odd → save one; even → half-angle
-sec/tan or csc/cot: save derivative pair
-Never guess substitutions.
-
-Partial Fractions
-
-Degree(top) ≥ degree(bottom) → polynomial division first
-Types: distinct linear, repeated linear, irreducible quadratic (linear numerator)
-Denominator must be fully factored
-
-SERIES
-
-Always start with Test for Divergence
-If lim aₙ ≠ 0 → diverges immediately
-
-Test Selection Rules
-
-Pure powers → p-test
-Geometric → geometric test
-Factorials or exponentials → ratio test
-nth powers → root test
-Addition/subtraction in terms → Limit Comparison Test (default)
-Trig with powers → comparison (via boundedness)
-(−1)ⁿ → alternating series test
-Telescoping → partial fractions + limits
-
-Teaching rule:
-Prefer methods that work every time (LCT) over shortcuts (DCT).
-Never guess tests.
-
-Speed hierarchy:
-ln n ≪ nᵖ ≪ aⁿ ≪ n! ≪ nⁿ
-
-POWER SERIES & TAYLOR
-
-Always use Ratio Test first to find radius
-Solve |x − a| < R
-Test endpoints separately
-
-Taylor formula:
-f(x) = Σ f⁽ⁿ⁾(a)/n! · (x−a)ⁿ
-
-APPLICATIONS OF INTEGRATION
-
-Area:
-w.r.t. x → top − bottom
-w.r.t. y → right − left
-
-Volumes:
-Disks/Washers and Shells per standard rules
-
-Work and Mass:
-Use correct geometry and setup
-
-IBP TABLE — REQUIRED LANGUAGE
-
-Use “over and down” and “straight across”
-Forbidden phrases:
-“diagonal process”, “last diagonal”, “remaining diagonal term”
-
-Required language:
-“over and down”
-“straight across”
-“same as the original integral”
-“move to the left-hand side”
-
-You are a private professor, not a calculator.
-Structure first. Repetition builds mastery.
-`;
+  return text.slice(startIdx, endIdx).trim();
+}
 
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
-      res.status(405).send("Method Not Allowed");
+      res.statusCode = 405;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Method Not Allowed");
       return;
     }
 
     const MAX_FILES = 5;
-    const MAX_FILE_SIZE = 3 * 1024 * 1024;
-    const MAX_TOKENS = 2500;
+    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB each
+    const MAX_OUTPUT_TOKENS = 2500;
 
     let fields: any = {};
     let files: any = {};
 
-    const isMultipart =
-      String(req.headers["content-type"] || "").includes("multipart/form-data");
+    const contentType = String(req.headers?.["content-type"] || "");
+    const isMultipart = contentType.includes("multipart/form-data");
 
     if (isMultipart) {
       const form = formidable({
         multiples: true,
         maxFiles: MAX_FILES,
-        maxFileSize: MAX_FILE_SIZE,
+        maxFileSize: MAX_FILE_SIZE_BYTES,
+        allowEmptyFiles: true,
       });
 
       ({ fields, files } = await new Promise<{ fields: any; files: any }>(
         (resolve, reject) => {
-          form.parse(req, (err, flds, fls) => {
+          form.parse(req, (err: any, flds: any, fls: any) => {
             if (err) reject(err);
             else resolve({ fields: flds, files: fls });
           });
         }
       ));
     } else {
-      const raw = await new Promise<string>((resolve) => {
+      const raw = await new Promise<string>((resolve, reject) => {
         let data = "";
-        req.on("data", (c) => (data += c));
+        req.setEncoding("utf8");
+        req.on("data", (chunk: string) => (data += chunk));
         req.on("end", () => resolve(data));
+        req.on("error", reject);
       });
-      fields = raw ? JSON.parse(raw) : {};
+
+      try {
+        fields = raw ? JSON.parse(raw) : {};
+      } catch {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Invalid JSON body");
+        return;
+      }
     }
 
-    const message = String(fields.message || "").trim();
+    const message = String(fields.message ?? "").trim();
     if (!message) {
-      res.status(400).send("Missing message");
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Missing message");
       return;
     }
 
-    let extractedText = "";
-
-    const fileList: any[] = [];
-    for (const key in files) {
-      const f = files[key];
-      if (Array.isArray(f)) fileList.push(...f);
-      else if (f) fileList.push(f);
+    if (!process.env.OPENAI_API_KEY) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Server missing OPENAI_API_KEY");
+      return;
     }
 
+    // -------------------------
+    // Extract PDF text from uploads
+    // -------------------------
+    const fileList = collectFiles(files);
+
+    let pdfText = "";
     for (const f of fileList) {
+      if (!f) continue;
+
+      const size = f.size || 0;
+      if (size > MAX_FILE_SIZE_BYTES) continue;
+
       if (f.mimetype === "application/pdf" && f.filepath) {
-        const buffer = fs.readFileSync(f.filepath);
-        const pdf = await pdfParse(buffer);
-        extractedText += `\n\n${pdf.text}`;
+        const buf = fs.readFileSync(f.filepath);
+        const parsed = await pdfParse(buf);
+        pdfText += `\n\n${parsed.text || ""}`;
       }
     }
 
-    const match = message.match(/problem\s+(\d+)/i);
-    const routingInstruction =
-      match && extractedText
-        ? `Find and solve problem ${match[1]} from the uploaded homework.`
-        : "";
+    // -------------------------
+    // If user said "do problem 16", pull ONLY that problem
+    // -------------------------
+    const probMatch =
+      message.match(/\bproblem\s+(\d+)\b/i) ||
+      message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
+      message.match(/\b#\s*(\d+)\b/i);
 
-    const userContent = `
-${routingInstruction}
+    let extractedProblem = "";
+    if (probMatch && pdfText) {
+      const n = Number(probMatch[1]);
+      if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
+    }
 
-Student question:
-${message}
+    // Fallback: if we didn't find a clean block, still include some text
+    const contextToSend =
+      extractedProblem ||
+      (pdfText ? pdfText.slice(0, 80_000) : ""); // clip to keep requests sane
 
-Homework text:
-${extractedText}
-`;
+    const routingInstruction = probMatch
+      ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
+      : "";
 
-    res.writeHead(200, {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "Transfer-Encoding": "chunked",
+    const userContent =
+      `${routingInstruction}\n\n` +
+      `Student message:\n${message}\n\n` +
+      (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
+
+    // -------------------------
+    // Stream response
+    // -------------------------
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const model = process.env.OPENAI_MODEL || "gpt-4o"; // set OPENAI_MODEL on Vercel if you want a specific one
+
+    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        temperature: 0.0,
+        top_p: 1.0,
+        frequency_penalty: 0.0,
+        presence_penalty: 0.0,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        messages: [
+          { role: "system", content: WOODY_SYSTEM_PROMPT },
+          { role: "user", content: userContent },
+        ],
+      }),
     });
 
-    const upstream = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4-0125-preview", // closest to GPT-5.2 behavior
-          stream: true,
-          temperature: 0.0,
-          max_tokens: MAX_TOKENS,
-          messages: [
-            { role: "system", content: WOODY_SYSTEM_PROMPT },
-            { role: "user", content: userContent },
-          ],
-        }),
-      }
-    );
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => "");
+      res.write(
+        `Upstream error (${upstream.status}). ${text ? text.slice(0, 800) : ""}`
+      );
+      res.end();
+      return;
+    }
 
-    const reader = upstream.body!.getReader();
+    const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
 
+    let buffer = "";
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split("\n\n");
-      buffer = chunks.pop() || "";
 
-      for (const chunk of chunks) {
-        const line = chunk
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        const line = part
           .split("\n")
-          .find((l) => l.startsWith("data:"));
+          .map((s) => s.trim())
+          .find((s) => s.startsWith("data:"));
         if (!line) continue;
 
-        const data = line.replace("data:", "").trim();
+        const data = line.replace(/^data:\s*/, "");
         if (data === "[DONE]") {
           res.end();
           return;
@@ -277,14 +227,20 @@ ${extractedText}
 
         try {
           const json = JSON.parse(data);
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) res.write(delta);
-        } catch {}
+          const delta = json?.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            res.write(delta);
+          }
+        } catch {
+          // ignore malformed chunks
+        }
       }
     }
 
     res.end();
   } catch (err: any) {
-    res.status(500).send(`Server error: ${err.message}`);
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end(`Server error: ${err?.message || "unknown"}`);
   }
 }
