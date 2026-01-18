@@ -1,12 +1,15 @@
 // api/chat.ts
 import formidable from "formidable";
 import fs from "fs";
+import { createRequire } from "module";
 
 export const runtime = "nodejs";
 
 export const config = {
   api: { bodyParser: false },
 };
+
+const require = createRequire(import.meta.url);
 
 function collectFiles(files: any): any[] {
   const out: any[] = [];
@@ -42,11 +45,12 @@ function shouldAllowIbpTable(message: string): boolean {
   const m = message.toLowerCase();
   if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
 
-  const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
   const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
   const hasExp = /\be\^|\bexp\b/.test(m);
   const hasLn = /\bln\b|\blog\b/.test(m);
-  return hasPoly && (hasTrig || hasExp || hasLn);
+  const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
+
+  return (hasExp && hasTrig) || (hasPoly && (hasTrig || hasExp || hasLn));
 }
 
 export default async function handler(req: any, res: any) {
@@ -62,47 +66,36 @@ export default async function handler(req: any, res: any) {
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
 
     // Cost control:
-    const MAX_OUTPUT_TOKENS = 1400; // lower = cheaper
-    const MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER = 0; // do not send whole PDF unless "problem ##"
+    const MAX_OUTPUT_TOKENS = 1400;
+    const MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER = 0;
     const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
 
-    const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
+    // ✅ Inline prompt (safe for Vercel)
+    const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor
 
 IDENTITY (STRICT)
 - Display name: Professor Woody AI Clone
 - You are not ChatGPT. You are not a generic tutor.
 
 GREETING RULE (CRITICAL)
-- ONLY greet if the student’s message is a greeting (examples: "hi", "hello", "hey", "good morning", "what’s up").
-- If the student asks ANY math question (examples: "integrate ...", "solve ...", "find the sum ...", "do problem 16"), DO NOT greet.
-- For math questions, begin immediately with the method + setup. No welcome line.
+- ONLY greet if the student’s message is ONLY a greeting (examples: "hi", "hello", "hey", "good morning", "what’s up").
+- If the student asks ANY math question, DO NOT greet. Begin immediately with method + setup.
 - If you DO greet, say exactly: "Welcome to Woody Calculus Clone AI."
 - Never say: "Welcome to Calculus II"
 - Never say: "How can I help you today?"
 
 Tone: calm, confident, instructional.
-Occasionally (sparingly) use phrases like:
-"Perfect practice makes perfect."
-"Repetition builds muscle memory."
-"This is a good problem to practice a few times."
-Never overuse coaching language or interrupt algebra.
+Sparingly: "Perfect practice makes perfect." / "Repetition builds muscle memory."
 
 ABSOLUTE OUTPUT RULES
-- All math must be in LaTeX: use $...$ inline and $$...$$ for display.
+- All math must be in LaTeX: $...$ inline and $$...$$ for display.
 - Do NOT use unicode superscripts like x². Use LaTeX: $x^2$.
 - End every indefinite integral with + C.
 
-IBP RULES
-- Tabular reasoning only (no IBP formula).
+IBP RULES (always)
+- Tabular reasoning only. Never state the IBP formula.
 - MUST begin by naming the IBP type explicitly (Type I / II / III).
 - Required language: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
-
-Trig Substitution
-- MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
-- Always convert back to x.
-
-You are a private professor, not a calculator.
-Structure first. Repetition builds mastery.
 `;
 
     let fields: any = {};
@@ -168,17 +161,15 @@ Structure first. Repetition builds mastery.
     let pdfText = "";
 
     if (hasPdf) {
-      // ✅ Load pdf-parse safely at runtime (avoids import-time crashes)
-      let pdfParseFn: null | ((data: Buffer) => Promise<{ text: string }>) = null;
+      let pdfParse: ((data: Buffer) => Promise<{ text: string }>) | null = null;
       try {
-        const mod: any = await import("pdf-parse");
-        pdfParseFn = (mod?.default ?? mod) as any;
+        pdfParse = require("pdf-parse");
       } catch (e: any) {
         res.statusCode = 500;
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.end(
           `Server error: could not load pdf-parse.\n` +
-            `Make sure pdf-parse is installed in dependencies.\n` +
+            `Make sure it exists in dependencies.\n` +
             `${e?.message || e}`
         );
         return;
@@ -191,7 +182,7 @@ Structure first. Repetition builds mastery.
           if (f.mimetype !== "application/pdf" || !f.filepath) continue;
 
           const buf = fs.readFileSync(f.filepath);
-          const parsed = await pdfParseFn(buf);
+          const parsed = await pdfParse(buf);
           if (parsed?.text) pdfText += `\n\n${parsed.text}`;
         } catch {
           // ignore per-file parse errors
@@ -201,7 +192,6 @@ Structure first. Repetition builds mastery.
 
     // -------------------------
     // If user asked for "problem ##", extract only that block.
-    // Otherwise do NOT send the whole PDF (cost control).
     // -------------------------
     const probMatch =
       message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
@@ -215,48 +205,37 @@ Structure first. Repetition builds mastery.
 
     const allowIbpTable = shouldAllowIbpTable(message);
 
-    // IMPORTANT: we still allow a "table-like" block for IBP, but NOT markdown tables.
-    // Your UI will format the plain text tabular block nicely (with the ChatMessage.tsx I gave you).
+    // ✅ THIS is the important fix: enforce YOUR Type II table semantics
     const tableModeGuardrails = allowIbpTable
       ? `
 IBP TABLE MODE (ONLY if you actually use IBP):
-- You may include a SINGLE tabular block ONLY for IBP and NEVER more than ONE.
-- The tabular block MUST be plain text (NOT a Markdown table).
-- Format it like this (spaces are fine):
-  sign  u  dv
-  +     ...
-  -     ...
-  +     ...
-- ALWAYS state the IBP type first (Type I / Type II / Type III).
+- You may include AT MOST ONE table total.
+- If you use IBP, you MUST state the IBP type first.
 
-Type II (exponential × trig) — EXACT requirements:
-- Produce EXACTLY ONE 3-row tabular block with columns: sign, u, dv (plain text).
-- Rows must be: + then − then +
-- After the block:
-  - Say: “Multiply over and down on the first row.”
-  - Say: “Multiply over and down on the second row.”
-  - Say: “Multiply straight across on the third row to get the last integral.”
-  - Then: “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
-- Do NOT create a second table/block. Do NOT say “apply IBP again.” Do NOT restart.
+TYPE II (exponential × trig) — REQUIRED TABLE FORMAT (Woody standard):
+- Output EXACTLY ONE 3-row table with columns: sign | u | dv
+- The sign column must be exactly: + then − then + (plain symbols only).
+- u column must be the exponential factor repeated each row (example: e^x, e^{3x}, etc.).
+- dv column must be the INTEGRATED trig sequence (v-values), NOT the original dv.
+  Examples:
+  - If trig is cos(ax), dv column must start with sin(ax)/a, then -cos(ax)/a^2, then -sin(ax)/a^3.
+  - If trig is sin(ax), dv column must start with -cos(ax)/a, then -sin(ax)/a^2, then cos(ax)/a^3.
+- ABSOLUTELY FORBIDDEN in the dv column: any "dx", any "\\,dx", any "d x".
+- Do NOT label anything as "dv = ... dx" in the table. The dv column is the v-sequence only.
 
-Type I (polynomial × trig/exponential):
-- Final answer must be ONLY the sum of over-and-down products.
-- Do NOT write extra integrals like “−∫ … + ∫ … − ∫ …”. No recursion.
+After the single table, you must say:
+- “Multiply over and down on the first row.”
+- “Multiply over and down on the second row.”
+- “Multiply straight across on the third row to get the last integral.”
+- “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
 
-Type III (ln or inverse trig):
-- One block max. Row 1 over-and-down, Row 2 straight across. Evaluate remaining integral directly.
+TYPE I and TYPE III:
+- If you include a table, one table max. No recursion tables. No extra junk.
+
 `
       : `
 HARD OUTPUT CONSTRAINTS:
-- Do NOT output any tables or table-like formatting.
-`;
-
-    const coreGuardrails = `
-CORE GUARDRAILS:
-- If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
-- If trig substitution is used: explicitly name the matching radical form first.
-- LaTeX for all math. No unicode superscripts.
-- If the student message is a greeting only, use the required greeting line exactly and stop.
+- Do NOT output any tables (no Markdown tables, no ASCII tables, no columns).
 `;
 
     const routingInstruction = probMatch
@@ -265,7 +244,6 @@ CORE GUARDRAILS:
         ? `A homework PDF is attached. For cost control, do NOT summarize the entire PDF. If the student did not specify a problem number, ask them to say "do problem ##" (or paste the exact problem text).`
         : ``;
 
-    // Context decision (cost control)
     let contextToSend = "";
     if (extractedProblem) {
       contextToSend = extractedProblem.slice(0, MAX_PDF_CHARS_IF_PROBLEM_NUMBER);
@@ -275,7 +253,6 @@ CORE GUARDRAILS:
 
     const userContent =
       `${tableModeGuardrails}\n` +
-      `${coreGuardrails}\n\n` +
       `${routingInstruction}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
@@ -359,7 +336,6 @@ CORE GUARDRAILS:
 
     res.end();
   } catch (err: any) {
-    // If we get here, we return the stack so the client can show it.
     res.statusCode = 500;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
