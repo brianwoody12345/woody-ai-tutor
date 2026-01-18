@@ -53,6 +53,61 @@ function isTableSeparatorRow(line: string): boolean {
   return /^(\|?-{3,}\|)+-?\|?$/.test(s);
 }
 
+// Render LaTeX in a cell (handles both inline $ and display $$)
+function renderCellWithLatex(cell: string): string {
+  let processed = cell;
+  
+  // Handle display math $$...$$ first
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+    try {
+      return katex.renderToString(String(math).trim(), {
+        displayMode: true,
+        throwOnError: false,
+      });
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  // Handle inline math $...$
+  processed = processed.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
+    try {
+      return katex.renderToString(String(math).trim(), {
+        displayMode: false,
+        throwOnError: false,
+      });
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  // Handle \(...\) inline math
+  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
+    try {
+      return katex.renderToString(String(math).trim(), {
+        displayMode: false,
+        throwOnError: false,
+      });
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  // Handle \[...\] display math
+  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
+    try {
+      return katex.renderToString(String(math).trim(), {
+        displayMode: true,
+        throwOnError: false,
+      });
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  return processed;
+}
+
 function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: number } | null {
   // need at least header + separator + 1 row
   if (lines.length < 3) return null;
@@ -72,11 +127,15 @@ function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: num
   }
   if (rows.length === 0) return null;
 
-  const splitRow = (row: string) =>
-    row
-      .split('|')
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0);
+  // Improved split that handles empty first/last cells from leading/trailing pipes
+  const splitRow = (row: string) => {
+    // Remove leading/trailing pipes and split
+    let trimmed = row.trim();
+    if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+    if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+    
+    return trimmed.split('|').map((c) => c.trim());
+  };
 
   const headers = splitRow(header);
   const body = rows.map(splitRow);
@@ -84,7 +143,7 @@ function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: num
   const ths = headers
     .map(
       (h) => `<th style="
-        text-align:left;
+        text-align:center;
         padding:10px 12px;
         font-size:12px;
         font-weight:800;
@@ -92,7 +151,8 @@ function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: num
         text-transform:uppercase;
         color:hsl(var(--muted-foreground));
         border-bottom:1px solid hsl(var(--border) / 0.6);
-      ">${escapeHtml(h)}</th>`
+        border-right:1px solid hsl(var(--border) / 0.3);
+      ">${renderCellWithLatex(h)}</th>`
     )
     .join('');
 
@@ -100,13 +160,16 @@ function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: num
     .map((r) => {
       const tds = r
         .map(
-          (c) => `<td style="
+          (c, idx) => `<td style="
             padding:10px 12px;
             font-size:14px;
             color:hsl(var(--foreground));
             border-bottom:1px solid hsl(var(--border) / 0.35);
-            vertical-align:top;
-          ">${escapeHtml(c)}</td>`
+            border-right:1px solid hsl(var(--border) / 0.3);
+            vertical-align:middle;
+            text-align:${idx === 0 ? 'center' : 'left'};
+            ${idx === 0 ? 'font-weight:600;' : ''}
+          ">${renderCellWithLatex(c)}</td>`
         )
         .join('');
       return `<tr>${tds}</tr>`;
