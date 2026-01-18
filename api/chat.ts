@@ -43,13 +43,68 @@ function extractProblemBlock(text: string, n: number): string {
 // Conservative trigger for allowing IBP-table mode
 function shouldAllowIbpTable(message: string): boolean {
   const m = message.toLowerCase();
-  if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
+  if (
+    m.includes("integration by parts") ||
+    m.includes("ibp") ||
+    m.includes("tabular")
+  )
+    return true;
 
   const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
   const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
   const hasExp = /\be\^|\bexp\b/.test(m);
   const hasLn = /\bln\b|\blog\b/.test(m);
   return hasPoly && (hasTrig || hasExp || hasLn);
+}
+
+// Greeting-only detector (so we can enforce your greeting rule)
+function isGreetingOnly(message: string): boolean {
+  const m = message.trim().toLowerCase();
+
+  // remove common punctuation
+  const cleaned = m.replace(/[!.?,;:]+/g, "").trim();
+
+  // if they include digits/math symbols/operators, not a greeting-only message
+  if (/[0-9]/.test(cleaned)) return false;
+  if (/[=+\-*/^]/.test(cleaned)) return false;
+  if (cleaned.includes("integrate") || cleaned.includes("solve") || cleaned.includes("derivative")) return false;
+  if (cleaned.includes("problem") || cleaned.includes("do ") || cleaned.includes("evaluate")) return false;
+
+  const greetings = new Set([
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "sup",
+    "what's up",
+    "whats up",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "howdy",
+  ]);
+
+  // allow small variants like "hi there"
+  if (greetings.has(cleaned)) return true;
+  if (
+    cleaned.startsWith("hi ") ||
+    cleaned.startsWith("hello ") ||
+    cleaned.startsWith("hey ") ||
+    cleaned.startsWith("good morning") ||
+    cleaned.startsWith("good afternoon") ||
+    cleaned.startsWith("good evening") ||
+    cleaned.startsWith("whats up") ||
+    cleaned.startsWith("what's up")
+  ) {
+    // but if they add other content, we treat as not greeting-only
+    // e.g. "hi, integrate e^x cos x" should NOT be greeting-only
+    const mathHint = /\b(integrate|solve|find|compute|evaluate|derivative|limit|series|sum|problem)\b/.test(
+      cleaned
+    );
+    return !mathHint;
+  }
+
+  return false;
 }
 
 export default async function handler(req: any, res: any) {
@@ -70,7 +125,7 @@ export default async function handler(req: any, res: any) {
     const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
 
     // ✅ Inline prompt here to avoid cross-folder imports that can crash on Vercel
-    const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
+    const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor
 
 IDENTITY (STRICT)
 - Display name: Professor Woody AI Clone
@@ -123,12 +178,14 @@ Structure first. Repetition builds mastery.
         allowEmptyFiles: true,
       });
 
-      ({ fields, files } = await new Promise<{ fields: any; files: any }>((resolve, reject) => {
-        form.parse(req, (err: any, flds: any, fls: any) => {
-          if (err) reject(err);
-          else resolve({ fields: flds, files: fls });
-        });
-      }));
+      ({ fields, files } = await new Promise<{ fields: any; files: any }>(
+        (resolve, reject) => {
+          form.parse(req, (err: any, flds: any, fls: any) => {
+            if (err) reject(err);
+            else resolve({ fields: flds, files: fls });
+          });
+        }
+      ));
     } else {
       const raw = await new Promise<string>((resolve, reject) => {
         let data = "";
@@ -167,7 +224,9 @@ Structure first. Repetition builds mastery.
     // Parse PDFs (only if present)
     // -------------------------
     const fileList = collectFiles(files);
-    const hasPdf = fileList.some((f) => f?.mimetype === "application/pdf" && f?.filepath);
+    const hasPdf = fileList.some(
+      (f) => f?.mimetype === "application/pdf" && f?.filepath
+    );
 
     let pdfText = "";
 
@@ -190,7 +249,8 @@ Structure first. Repetition builds mastery.
       for (const f of fileList) {
         try {
           if (!f) continue;
-          if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES) continue;
+          if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES)
+            continue;
           if (f.mimetype !== "application/pdf" || !f.filepath) continue;
 
           const buf = fs.readFileSync(f.filepath);
@@ -218,30 +278,42 @@ Structure first. Repetition builds mastery.
 
     const allowIbpTable = shouldAllowIbpTable(message);
 
+    // ✅ UPDATED: No Markdown tables. Use a clean plain-text "tabular block".
     const tableModeGuardrails = allowIbpTable
       ? `
-IBP TABLE MODE (ONLY if you actually use IBP):
-- You may include tables ONLY for IBP, and NEVER more than ONE table total.
+IBP TABULAR MODE (ONLY if you actually use IBP):
+- You may include a tabular setup ONLY for IBP, and NEVER more than ONE tabular block total.
 - ALWAYS state the IBP type first (Type I / Type II / Type III).
+- ABSOLUTELY FORBIDDEN: Markdown tables, pipes "|", table formatting, grids, or any "u | dv" layout.
 
 Type II (exponential × trig) — EXACT requirements:
-- Produce EXACTLY ONE 3-row Markdown table with columns: sign | u | dv
-- Rows must be: + then − then +
-- The 3rd row is the “straight across” row that produces the last integral.
-- Do NOT create a second table. Do NOT say “apply IBP again.” Do NOT restart with a new table.
-- After the single table:
-  - Say: “Multiply over and down on the first row.”
-  - Say: “Multiply over and down on the second row.”
-  - Say: “Multiply straight across on the third row to get the last integral.”
-  - Then: “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
+- Do NOT output a Markdown table.
+- Output the 3-row tabular setup as a plain-text block EXACTLY like this shape:
+
+sign   u            dv
++      e^x          sin(x) dx
+-      e^x          -cos(x) dx
++      e^x          -sin(x) dx
+
+Rules:
+- EXACTLY 3 rows, signs + then − then +.
+- Keep dv in "sin(x) dx" style (with dx shown).
+- Do NOT create a second tabular block. Do NOT say “apply IBP again.” Do NOT restart.
+- After the single tabular block, say (exactly these ideas, same wording allowed):
+  - “Multiply over and down on the first row.”
+  - “Multiply over and down on the second row.”
+  - “Multiply straight across on the third row to get the last integral.”
+  - “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
 
 Type I (polynomial × trig/exponential) — EXACT requirements:
-- You may show one Markdown table if desired, but the final answer must be ONLY the sum of over-and-down products.
-- Do NOT write extra integrals like “−∫ … + ∫ … − ∫ …”. No recursion.
-- Do NOT say “solve using IBP again.” Just finish from the tabular products.
+- If you show a tabular block, it must be plain-text (no Markdown tables).
+- Final answer must be ONLY the sum of over-and-down products (no leftover integrals, no recursion).
+- Do NOT say “solve using IBP again.” Just finish from the products.
 
 Type III (ln or inverse trig) — requirements:
-- One table max. Row 1 over-and-down, Row 2 straight across. Evaluate remaining integral directly.
+- One plain-text tabular block max.
+- Row 1 over-and-down, Row 2 straight across.
+- Evaluate remaining integral directly.
 `
       : `
 HARD OUTPUT CONSTRAINTS:
@@ -250,17 +322,18 @@ HARD OUTPUT CONSTRAINTS:
 
     const coreGuardrails = `
 CORE GUARDRAILS:
+- If the student message is a greeting only, output ONLY: "Welcome to Woody Calculus Clone AI."
+- Otherwise: DO NOT greet.
 - If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
 - If trig substitution is used: explicitly name the matching radical form first.
 - LaTeX for all math. No unicode superscripts.
-- If the student message is a greeting only, use the required greeting line exactly and stop.
 `;
 
     const routingInstruction = probMatch
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
       : hasPdf
-        ? `A homework PDF is attached. For cost control, do NOT summarize the entire PDF. If the student did not specify a problem number, ask them to say "do problem ##" (or paste the exact problem text).`
-        : ``;
+      ? `A homework PDF is attached. For cost control, do NOT summarize the entire PDF. If the student did not specify a problem number, ask them to say "do problem ##" (or paste the exact problem text).`
+      : ``;
 
     // Context decision (cost control)
     let contextToSend = "";
@@ -270,7 +343,455 @@ CORE GUARDRAILS:
       contextToSend = pdfText.slice(0, MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER);
     }
 
+    // Strong, deterministic greeting control (helps prevent "Welcome to Calculus II")
+    const greetingGate = isGreetingOnly(message)
+      ? `GREETING OVERRIDE: The student's message IS a greeting. Output ONLY the greeting line and stop.`
+      : `GREETING OVERRIDE: The student's message is NOT a greeting. Do NOT greet. Begin immediately with method + setup.`;
+
     const userContent =
+      `${greetingGate}\n\n` +
+      `${tableModeGuardrails}\n` +
+      `${coreGuardrails}\n\n` +
+      `${routingInstruction}\n\n` +
+      `Student message:\n${message}\n\n` +
+      (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
+
+    // -------------------------
+    // Stream response
+    // -------------------------
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const model = process.env.OPENAI_MODEL || "gpt-4o";
+
+    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        temperature: 0.0,
+        top_p: 1.0,
+        frequency_penalty: 0.0,
+        presence_penalty: 0.0,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        messages: [
+          { role: "system", content: WOODY_SYSTEM_PROMPT },
+          { role: "user", content: userContent },
+        ],
+      }),
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => "");
+      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1200)}`);
+      res.end();
+      return;
+    }
+
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        const line = part
+          .split("\n")
+          .map((s) => s.trim())
+          .find((s) => s.startsWith("data:"));
+        if (!line) continue;
+
+        const data = line.replace(/^data:\s*/, "");
+        if (data === "[DONE]") {
+          res.end();
+          return;
+        }
+
+        try {
+          const json = JSON.parse(data);
+          const delta = json?.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            res.write(delta);
+          }
+        } catch {
+          // ignore malformed chunks
+        }
+      }
+    }
+
+    res.end();
+  } catch (err: any) {
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
+  }
+}
+// api/chat.ts
+import formidable from "formidable";
+import fs from "fs";
+import { createRequire } from "module";
+
+export const runtime = "nodejs";
+
+export const config = {
+  api: { bodyParser: false },
+};
+
+const require = createRequire(import.meta.url);
+
+function collectFiles(files: any): any[] {
+  const out: any[] = [];
+  for (const key of Object.keys(files || {})) {
+    const v = files[key];
+    if (Array.isArray(v)) out.push(...v);
+    else if (v) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Extract a single numbered problem block from text.
+ * Finds "16)" or "16." at the start of a line and captures until next numbered item.
+ */
+function extractProblemBlock(text: string, n: number): string {
+  const escaped = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const startRe = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
+  const m = startRe.exec(text);
+  if (!m || m.index == null) return "";
+
+  const startIdx = m.index + (m[1] ? m[1].length : 0);
+  const rest = text.slice(startIdx);
+
+  const nextIdx = rest.slice(1).search(/\n\s*\d+\s*[\)\.]\s*/m);
+  const endIdx = nextIdx === -1 ? text.length : startIdx + 1 + nextIdx;
+
+  return text.slice(startIdx, endIdx).trim();
+}
+
+// Conservative trigger for allowing IBP-table mode
+function shouldAllowIbpTable(message: string): boolean {
+  const m = message.toLowerCase();
+  if (
+    m.includes("integration by parts") ||
+    m.includes("ibp") ||
+    m.includes("tabular")
+  )
+    return true;
+
+  const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
+  const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
+  const hasExp = /\be\^|\bexp\b/.test(m);
+  const hasLn = /\bln\b|\blog\b/.test(m);
+  return hasPoly && (hasTrig || hasExp || hasLn);
+}
+
+// Greeting-only detector (so we can enforce your greeting rule)
+function isGreetingOnly(message: string): boolean {
+  const m = message.trim().toLowerCase();
+
+  // remove common punctuation
+  const cleaned = m.replace(/[!.?,;:]+/g, "").trim();
+
+  // if they include digits/math symbols/operators, not a greeting-only message
+  if (/[0-9]/.test(cleaned)) return false;
+  if (/[=+\-*/^]/.test(cleaned)) return false;
+  if (cleaned.includes("integrate") || cleaned.includes("solve") || cleaned.includes("derivative")) return false;
+  if (cleaned.includes("problem") || cleaned.includes("do ") || cleaned.includes("evaluate")) return false;
+
+  const greetings = new Set([
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "sup",
+    "what's up",
+    "whats up",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "howdy",
+  ]);
+
+  // allow small variants like "hi there"
+  if (greetings.has(cleaned)) return true;
+  if (
+    cleaned.startsWith("hi ") ||
+    cleaned.startsWith("hello ") ||
+    cleaned.startsWith("hey ") ||
+    cleaned.startsWith("good morning") ||
+    cleaned.startsWith("good afternoon") ||
+    cleaned.startsWith("good evening") ||
+    cleaned.startsWith("whats up") ||
+    cleaned.startsWith("what's up")
+  ) {
+    // but if they add other content, we treat as not greeting-only
+    // e.g. "hi, integrate e^x cos x" should NOT be greeting-only
+    const mathHint = /\b(integrate|solve|find|compute|evaluate|derivative|limit|series|sum|problem)\b/.test(
+      cleaned
+    );
+    return !mathHint;
+  }
+
+  return false;
+}
+
+export default async function handler(req: any, res: any) {
+  try {
+    if (req.method !== "POST") {
+      res.statusCode = 405;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Method Not Allowed");
+      return;
+    }
+
+    const MAX_FILES = 5;
+    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
+
+    // Cost control:
+    const MAX_OUTPUT_TOKENS = 1400; // lower = cheaper
+    const MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER = 0; // do not send whole PDF unless "problem ##"
+    const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
+
+    // ✅ Inline prompt here to avoid cross-folder imports that can crash on Vercel
+    const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor
+
+IDENTITY (STRICT)
+- Display name: Professor Woody AI Clone
+- You are not ChatGPT. You are not a generic tutor.
+
+GREETING RULE (CRITICAL)
+- ONLY greet if the student’s message is a greeting (examples: "hi", "hello", "hey", "good morning", "what’s up").
+- If the student asks ANY math question (examples: "integrate ...", "solve ...", "find the sum ...", "do problem 16"), DO NOT greet.
+- For math questions, begin immediately with the method + setup. No welcome line.
+- If you DO greet, say exactly: "Welcome to Woody Calculus Clone AI."
+- Never say: "Welcome to Calculus II"
+- Never say: "How can I help you today?"
+
+Tone: calm, confident, instructional.
+Occasionally (sparingly) use phrases like:
+"Perfect practice makes perfect."
+"Repetition builds muscle memory."
+"This is a good problem to practice a few times."
+Never overuse coaching language or interrupt algebra.
+
+ABSOLUTE OUTPUT RULES
+- All math must be in LaTeX: use $...$ inline and $$...$$ for display.
+- Do NOT use unicode superscripts like x². Use LaTeX: $x^2$.
+- End every indefinite integral with + C.
+
+IBP RULES
+- Tabular reasoning only (no IBP formula).
+- MUST begin by naming the IBP type explicitly (Type I / II / III).
+- Required language: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
+
+Trig Substitution
+- MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
+- Always convert back to x.
+
+You are a private professor, not a calculator.
+Structure first. Repetition builds mastery.
+`;
+
+    let fields: any = {};
+    let files: any = {};
+
+    const contentType = String(req.headers?.["content-type"] || "");
+    const isMultipart = contentType.includes("multipart/form-data");
+
+    if (isMultipart) {
+      const form = formidable({
+        multiples: true,
+        maxFiles: MAX_FILES,
+        maxFileSize: MAX_FILE_SIZE_BYTES,
+        allowEmptyFiles: true,
+      });
+
+      ({ fields, files } = await new Promise<{ fields: any; files: any }>(
+        (resolve, reject) => {
+          form.parse(req, (err: any, flds: any, fls: any) => {
+            if (err) reject(err);
+            else resolve({ fields: flds, files: fls });
+          });
+        }
+      ));
+    } else {
+      const raw = await new Promise<string>((resolve, reject) => {
+        let data = "";
+        req.setEncoding("utf8");
+        req.on("data", (chunk: string) => (data += chunk));
+        req.on("end", () => resolve(data));
+        req.on("error", reject);
+      });
+
+      try {
+        fields = raw ? JSON.parse(raw) : {};
+      } catch {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Invalid JSON body");
+        return;
+      }
+    }
+
+    const message = String(fields.message ?? "").trim();
+    if (!message) {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Missing message");
+      return;
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Server missing OPENAI_API_KEY");
+      return;
+    }
+
+    // -------------------------
+    // Parse PDFs (only if present)
+    // -------------------------
+    const fileList = collectFiles(files);
+    const hasPdf = fileList.some(
+      (f) => f?.mimetype === "application/pdf" && f?.filepath
+    );
+
+    let pdfText = "";
+
+    if (hasPdf) {
+      let pdfParse: ((data: Buffer) => Promise<{ text: string }>) | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        pdfParse = require("pdf-parse");
+      } catch (e: any) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end(
+          `Server error: could not load pdf-parse.\n` +
+            `Make sure it exists in dependencies.\n` +
+            `${e?.message || e}`
+        );
+        return;
+      }
+
+      for (const f of fileList) {
+        try {
+          if (!f) continue;
+          if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES)
+            continue;
+          if (f.mimetype !== "application/pdf" || !f.filepath) continue;
+
+          const buf = fs.readFileSync(f.filepath);
+          const parsed = await pdfParse(buf);
+          if (parsed?.text) pdfText += `\n\n${parsed.text}`;
+        } catch {
+          // ignore per-file parse errors
+        }
+      }
+    }
+
+    // -------------------------
+    // If user asked for "problem ##", extract only that block.
+    // Otherwise do NOT send the whole PDF (cost control).
+    // -------------------------
+    const probMatch =
+      message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
+      message.match(/\bproblem\s+(\d+)\b/i);
+
+    let extractedProblem = "";
+    if (probMatch && pdfText) {
+      const n = Number(probMatch[1]);
+      if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
+    }
+
+    const allowIbpTable = shouldAllowIbpTable(message);
+
+    // ✅ UPDATED: No Markdown tables. Use a clean plain-text "tabular block".
+    const tableModeGuardrails = allowIbpTable
+      ? `
+IBP TABULAR MODE (ONLY if you actually use IBP):
+- You may include a tabular setup ONLY for IBP, and NEVER more than ONE tabular block total.
+- ALWAYS state the IBP type first (Type I / Type II / Type III).
+- ABSOLUTELY FORBIDDEN: Markdown tables, pipes "|", table formatting, grids, or any "u | dv" layout.
+
+Type II (exponential × trig) — EXACT requirements:
+- Do NOT output a Markdown table.
+- Output the 3-row tabular setup as a plain-text block EXACTLY like this shape:
+
+sign   u            dv
++      e^x          sin(x) dx
+-      e^x          -cos(x) dx
++      e^x          -sin(x) dx
+
+Rules:
+- EXACTLY 3 rows, signs + then − then +.
+- Keep dv in "sin(x) dx" style (with dx shown).
+- Do NOT create a second tabular block. Do NOT say “apply IBP again.” Do NOT restart.
+- After the single tabular block, say (exactly these ideas, same wording allowed):
+  - “Multiply over and down on the first row.”
+  - “Multiply over and down on the second row.”
+  - “Multiply straight across on the third row to get the last integral.”
+  - “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
+
+Type I (polynomial × trig/exponential) — EXACT requirements:
+- If you show a tabular block, it must be plain-text (no Markdown tables).
+- Final answer must be ONLY the sum of over-and-down products (no leftover integrals, no recursion).
+- Do NOT say “solve using IBP again.” Just finish from the products.
+
+Type III (ln or inverse trig) — requirements:
+- One plain-text tabular block max.
+- Row 1 over-and-down, Row 2 straight across.
+- Evaluate remaining integral directly.
+`
+      : `
+HARD OUTPUT CONSTRAINTS:
+- Do NOT output any tables (no Markdown tables, no ASCII tables, no columns).
+`;
+
+    const coreGuardrails = `
+CORE GUARDRAILS:
+- If the student message is a greeting only, output ONLY: "Welcome to Woody Calculus Clone AI."
+- Otherwise: DO NOT greet.
+- If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
+- If trig substitution is used: explicitly name the matching radical form first.
+- LaTeX for all math. No unicode superscripts.
+`;
+
+    const routingInstruction = probMatch
+      ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
+      : hasPdf
+      ? `A homework PDF is attached. For cost control, do NOT summarize the entire PDF. If the student did not specify a problem number, ask them to say "do problem ##" (or paste the exact problem text).`
+      : ``;
+
+    // Context decision (cost control)
+    let contextToSend = "";
+    if (extractedProblem) {
+      contextToSend = extractedProblem.slice(0, MAX_PDF_CHARS_IF_PROBLEM_NUMBER);
+    } else if (pdfText && MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER > 0) {
+      contextToSend = pdfText.slice(0, MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER);
+    }
+
+    // Strong, deterministic greeting control (helps prevent "Welcome to Calculus II")
+    const greetingGate = isGreetingOnly(message)
+      ? `GREETING OVERRIDE: The student's message IS a greeting. Output ONLY the greeting line and stop.`
+      : `GREETING OVERRIDE: The student's message is NOT a greeting. Do NOT greet. Begin immediately with method + setup.`;
+
+    const userContent =
+      `${greetingGate}\n\n` +
       `${tableModeGuardrails}\n` +
       `${coreGuardrails}\n\n` +
       `${routingInstruction}\n\n` +
