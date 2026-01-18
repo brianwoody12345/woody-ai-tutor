@@ -34,7 +34,7 @@ export function ChatArea({ messages, isTyping }: ChatAreaProps) {
             <Bot className="w-8 h-8 text-primary" />
           </div>
           <h2 className="text-lg font-semibold text-foreground mb-1.5 tracking-tight">
-            Welcome to Woody Calculus II
+            Welcome to Woody Calculus Clone AI
           </h2>
           <p className="text-[13px] text-muted-foreground max-w-sm mb-6 leading-relaxed">
             Your AI Private Mathematics Professor. Ask about integration techniques, 
