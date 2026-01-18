@@ -53,6 +53,12 @@ function shouldAllowIbpTable(message: string): boolean {
   return (hasExp && hasTrig) || (hasPoly && (hasTrig || hasExp || hasLn));
 }
 
+function isGreetingOnly(message: string): boolean {
+  const m = message.trim().toLowerCase();
+  // Only greetings, nothing else
+  return /^(hi|hello|hey|yo|good morning|good afternoon|good evening|what's up|whats up)$/i.test(m);
+}
+
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
@@ -71,7 +77,7 @@ export default async function handler(req: any, res: any) {
     const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
 
     // ✅ Inline prompt (safe for Vercel)
-    const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor
+    const WOODY_SYSTEM_PROMPT = `Woody Calculus Clone AI — Private Professor
 
 IDENTITY (STRICT)
 - Display name: Professor Woody AI Clone
@@ -205,33 +211,48 @@ IBP RULES (always)
 
     const allowIbpTable = shouldAllowIbpTable(message);
 
-    // ✅ THIS is the important fix: enforce YOUR Type II table semantics
+    // ✅ This is the key fix:
+    // - Allow the model to use the same structure you liked
+    // - DO NOT force the wrong dv-column logic
+    // - DO NOT ban dx
+    // - Require the “over and down / straight across / move to left-hand side” wording
+    // - Encourage a single fenced code block table with header "sign | u | dv"
     const tableModeGuardrails = allowIbpTable
       ? `
 IBP TABLE MODE (ONLY if you actually use IBP):
 - You may include AT MOST ONE table total.
 - If you use IBP, you MUST state the IBP type first.
 
-TYPE II (exponential × trig) — REQUIRED TABLE FORMAT (Woody standard):
-- Output EXACTLY ONE 3-row table with columns: sign | u | dv
-- The sign column must be exactly: + then − then + (plain symbols only).
-- u column must be the exponential factor repeated each row (example: e^x, e^{3x}, etc.).
-- dv column must be the INTEGRATED trig sequence (v-values), NOT the original dv.
-  Examples:
-  - If trig is cos(ax), dv column must start with sin(ax)/a, then -cos(ax)/a^2, then -sin(ax)/a^3.
-  - If trig is sin(ax), dv column must start with -cos(ax)/a, then -sin(ax)/a^2, then cos(ax)/a^3.
-- ABSOLUTELY FORBIDDEN in the dv column: any "dx", any "\\,dx", any "d x".
-- Do NOT label anything as "dv = ... dx" in the table. The dv column is the v-sequence only.
+TABLE OUTPUT FORMAT (REQUIRED if you use a table):
+- Put the table INSIDE ONE fenced code block using triple backticks.
+- The header row must be exactly: "sign | u | dv"
+- Use exactly 3 rows for Type II.
+- Sign column must be exactly: + then − then + (plain symbols only).
+- u column must be the chosen u-factor each row (for Type II it repeats).
+- dv column must show the trig column entry for that row, written in LaTeX.
+  It MAY include "\\,dx" (this is allowed).
 
-After the single table, you must say:
+TYPE II (exponential × trig) — REQUIRED SEMANTICS:
+- Your dv column must reflect the correct trig antiderivative sequence.
+  Examples:
+  - If the original trig is $\\sin(ax)$:
+    Row1: $\\sin(ax)\\,dx$
+    Row2: $-\\cos(ax)/a$
+    Row3: $-\\sin(ax)/a^2$
+  - If the original trig is $\\cos(ax)$:
+    Row1: $\\cos(ax)\\,dx$
+    Row2: $\\sin(ax)/a$
+    Row3: $-\\cos(ax)/a^2$
+
+AFTER THE TABLE, REQUIRED WORDING (MUST APPEAR):
 - “Multiply over and down on the first row.”
 - “Multiply over and down on the second row.”
 - “Multiply straight across on the third row to get the last integral.”
 - “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
 
-TYPE I and TYPE III:
-- If you include a table, one table max. No recursion tables. No extra junk.
-
+CRITICAL CORRECTNESS:
+- Trig antiderivatives must be correct (e.g. $\\int \\sin x\\,dx=-\\cos x + C$).
+- Do NOT put an integral sign in the second-row “over and down” product.
 `
       : `
 HARD OUTPUT CONSTRAINTS:
@@ -251,9 +272,15 @@ HARD OUTPUT CONSTRAINTS:
       contextToSend = pdfText.slice(0, MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER);
     }
 
+    // If greeting-only, keep it short and force the exact greeting
+    const greetingOverride = isGreetingOnly(message)
+      ? `The student message is only a greeting. Reply with exactly: "Welcome to Woody Calculus Clone AI."`
+      : "";
+
     const userContent =
       `${tableModeGuardrails}\n` +
-      `${routingInstruction}\n\n` +
+      `${routingInstruction}\n` +
+      `${greetingOverride}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
 
