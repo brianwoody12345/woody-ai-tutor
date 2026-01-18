@@ -1,6 +1,7 @@
 // api/chat.ts
 import formidable from "formidable";
 import fs from "fs";
+import pdfParse from "pdf-parse";
 
 export const runtime = "nodejs";
 
@@ -10,196 +11,158 @@ export const config = {
   },
 };
 
-// Vercel Node Serverless Function
-// Streams plain text (frontend concatenates chunks)
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
-      res.statusCode = 405;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Method Not Allowed");
+      res.status(405).send("Method Not Allowed");
       return;
     }
 
     const MAX_FILES = 5;
-    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB
-    const MAX_TEXT_FROM_FILE = 50_000; // chars
-    const MAX_OUTPUT_TOKENS = 2500;
+    const MAX_FILE_SIZE = 3 * 1024 * 1024;
+    const MAX_TOKENS = 2500;
 
-    // -----------------------------
-    // Parse request body
-    // -----------------------------
     let fields: any = {};
     let files: any = {};
 
-    const contentType = String(req.headers?.["content-type"] || "");
-    const isMultipart = contentType.includes("multipart/form-data");
+    // -------------------------
+    // Parse request
+    // -------------------------
+    const isMultipart =
+      String(req.headers["content-type"] || "").includes("multipart/form-data");
 
     if (isMultipart) {
       const form = formidable({
         multiples: true,
         maxFiles: MAX_FILES,
-        maxFileSize: MAX_FILE_SIZE_BYTES,
-        allowEmptyFiles: true,
+        maxFileSize: MAX_FILE_SIZE,
       });
 
-      ({ fields, files } = await new Promise<{ fields: any; files: any }>(
-        (resolve, reject) => {
-          form.parse(req, (err: any, flds: any, fls: any) => {
-            if (err) reject(err);
-            else resolve({ fields: flds, files: fls });
-          });
-        }
-      ));
+      ({ fields, files } = await new Promise((resolve, reject) => {
+        form.parse(req, (err, flds, fls) => {
+          if (err) reject(err);
+          else resolve({ fields: flds, files: fls });
+        });
+      }));
     } else {
-      const raw = await new Promise<string>((resolve, reject) => {
+      const raw = await new Promise<string>((resolve) => {
         let data = "";
-        req.setEncoding("utf8");
-        req.on("data", (chunk: string) => (data += chunk));
+        req.on("data", (c) => (data += c));
         req.on("end", () => resolve(data));
-        req.on("error", reject);
       });
-
-      try {
-        fields = raw ? JSON.parse(raw) : {};
-      } catch {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Invalid JSON body");
-        return;
-      }
+      fields = raw ? JSON.parse(raw) : {};
     }
 
-    const message = String(fields.message ?? "").trim();
-    const systemPrompt = String(fields.systemPrompt ?? "").trim();
-    const topic = String(fields.topic ?? "").trim();
-    const showSetupFirst = String(fields.showSetupFirst ?? "false") === "true";
-    const woodyCoaching = String(fields.woodyCoaching ?? "true") === "true";
+    const message = String(fields.message || "").trim();
+    const systemPrompt = String(fields.systemPrompt || "").trim();
 
     if (!message) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Missing message");
+      res.status(400).send("Missing message");
       return;
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Server missing OPENAI_API_KEY");
+      res.status(500).send("Missing OPENAI_API_KEY");
       return;
     }
 
-    // -----------------------------
-    // Gather uploaded files (text only)
-    // -----------------------------
+    // -------------------------
+    // Extract PDF text
+    // -------------------------
+    let extractedText = "";
+
     const fileList: any[] = [];
-    for (const key of Object.keys(files || {})) {
-      const v = files[key];
-      if (Array.isArray(v)) fileList.push(...v);
-      else if (v) fileList.push(v);
+    for (const key in files) {
+      const f = files[key];
+      if (Array.isArray(f)) fileList.push(...f);
+      else if (f) fileList.push(f);
     }
 
-    if (fileList.length > MAX_FILES) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end(`Too many files (max ${MAX_FILES})`);
-      return;
-    }
-
-    let fileContext = "";
     for (const f of fileList) {
-      if (!f) continue;
-
-      const filename = f.originalFilename || "upload";
-      const mimetype = f.mimetype || "application/octet-stream";
-      const size = f.size || 0;
-
-      if (size > MAX_FILE_SIZE_BYTES) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end(`File too large: ${filename}`);
-        return;
-      }
-
-      if (String(mimetype).startsWith("text/") && f.filepath) {
-        try {
-          const raw = fs.readFileSync(f.filepath, "utf8");
-          const clipped = raw.slice(0, MAX_TEXT_FROM_FILE);
-          fileContext += `\n\n[File: ${filename}]\n${clipped}`;
-          if (raw.length > clipped.length) fileContext += "\n[...truncated...]";
-        } catch {
-          fileContext += `\n\n[File: ${filename}] (Could not read contents)`;
-        }
+      if (
+        f.mimetype === "application/pdf" &&
+        f.filepath &&
+        f.size <= MAX_FILE_SIZE
+      ) {
+        const buffer = fs.readFileSync(f.filepath);
+        const pdf = await pdfParse(buffer);
+        extractedText += `\n\n--- PDF CONTENT (${f.originalFilename}) ---\n${pdf.text}`;
       }
     }
 
-    // -----------------------------
-    // Build user content
-    // -----------------------------
-    const coachingLine = woodyCoaching
-      ? "Coaching phrases allowed (sparingly)."
-      : "Do not include coaching phrases.";
+    // -------------------------
+    // Problem-number routing
+    // -------------------------
+    let routingInstruction = "";
+    const match = message.match(/problem\s+(\d+)/i);
 
-    const setupLine = showSetupFirst
-      ? "Show setup clearly before computation."
-      : "Still show setup before computation.";
+    if (match && extractedText) {
+      routingInstruction = `
+The student asked for problem ${match[1]}.
 
-    const userContent =
-      `Topic: ${topic || "general"}\n` +
-      `${setupLine}\n` +
-      `${coachingLine}\n\n` +
-      `Student question:\n${message}` +
-      (fileContext ? `\n\nUploads:\n${fileContext}` : "");
+Search the uploaded PDF text for the problem labeled "${match[1]})" or "${match[1]}.".
+Extract ONLY that problem.
+Solve it completely.
+Do NOT ask for clarification.
+`;
+    }
 
-    // -----------------------------
-    // Prepare streaming response
-    // -----------------------------
-    res.statusCode = 200;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Transfer-Encoding", "chunked");
+    // -------------------------
+    // Build GPT input
+    // -------------------------
+    const userContent = `
+STUDENT QUESTION:
+${message}
 
-    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+${routingInstruction}
 
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        stream: true,
+UPLOADED FILE TEXT:
+${extractedText}
+`;
 
-        // 🔒 CRITICAL FIX
-        temperature: 0.0,
-        top_p: 1.0,
-        frequency_penalty: 0.0,
-        presence_penalty: 0.0,
-
-        max_tokens: MAX_OUTPUT_TOKENS,
-        messages: [
-          { role: "system", content: systemPrompt || "You are a helpful tutor." },
-          { role: "user", content: userContent },
-        ],
-      }),
+    // -------------------------
+    // Stream response
+    // -------------------------
+    res.writeHead(200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Transfer-Encoding": "chunked",
     });
 
-    if (!upstream.ok || !upstream.body) {
-      const text = await upstream.text().catch(() => "");
-      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 500)}`);
-      res.end();
+    const upstream = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+          stream: true,
+          temperature: 0.0,
+          max_tokens: MAX_TOKENS,
+          messages: [
+            {
+              role: "system",
+              content:
+                systemPrompt ||
+                "You are a private math professor. Use LaTeX for all math.",
+            },
+            { role: "user", content: userContent },
+          ],
+        }),
+      }
+    );
+
+    if (!upstream.body) {
+      res.end("No response from OpenAI");
       return;
     }
 
-    // -----------------------------
-    // Stream OpenAI SSE → client
-    // -----------------------------
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
-
     let buffer = "";
 
     while (true) {
@@ -207,19 +170,16 @@ export default async function handler(req: any, res: any) {
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
 
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-
-      for (const part of parts) {
-        const line = part
+      for (const chunk of chunks) {
+        const line = chunk
           .split("\n")
-          .map((s) => s.trim())
-          .find((s) => s.startsWith("data:"));
-
+          .find((l) => l.startsWith("data:"));
         if (!line) continue;
 
-        const data = line.replace(/^data:\s*/, "");
+        const data = line.replace("data:", "").trim();
         if (data === "[DONE]") {
           res.end();
           return;
@@ -227,20 +187,14 @@ export default async function handler(req: any, res: any) {
 
         try {
           const json = JSON.parse(data);
-          const delta = json?.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length > 0) {
-            res.write(delta);
-          }
-        } catch {
-          // Ignore malformed chunks
-        }
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) res.write(delta);
+        } catch {}
       }
     }
 
     res.end();
   } catch (err: any) {
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(`Server error: ${err?.message || "unknown"}`);
+    res.status(500).send(`Server error: ${err.message}`);
   }
 }
