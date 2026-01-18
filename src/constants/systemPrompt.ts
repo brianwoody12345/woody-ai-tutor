@@ -43,7 +43,7 @@ TRIGONOMETRIC SUBSTITUTION:
   - $\\sqrt{x^2 - a^2}$ → $x = a \\sec(\\theta)$
 
 Steps:
-1. Identify the form (silently)
+1. Identify the form 
 2. Substitute and compute $dx$
 3. Fully simplify
 4. Integrate
