@@ -14,9 +14,22 @@ export default async function handler(
     return;
   }
 
-  const { message } = req.body ?? {};
+  const { message, messages } = req.body ?? {};
 
-  if (!message || typeof message !== "string") {
+  // ✅ Accept BOTH formats (robust, ChatGPT-style)
+  let userMessage = "";
+
+  if (typeof message === "string") {
+    userMessage = message;
+  } else if (
+    Array.isArray(messages) &&
+    messages.length > 0 &&
+    typeof messages[messages.length - 1]?.content === "string"
+  ) {
+    userMessage = messages[messages.length - 1].content;
+  }
+
+  if (!userMessage) {
     res.status(400).send("Missing message");
     return;
   }
@@ -215,7 +228,7 @@ Structure first. Repetition builds mastery.
         stream: true,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: message },
+          { role: "user", content: userMessage },
         ],
       }),
     }
