@@ -24,7 +24,7 @@ export default async function handler(req: any, res: any) {
     const MAX_FILES = 5;
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB each
     const MAX_TEXT_FROM_FILE = 50_000; // chars per text file
-    const MAX_OUTPUT_TOKENS = 900;
+    const MAX_OUTPUT_TOKENS = 2500;
 
     // ---- Parse body: multipart OR JSON ----
     let fields: any = {};
