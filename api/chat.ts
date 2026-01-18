@@ -1,108 +1,7 @@
-// api/chat.ts
-export const runtime = "nodejs";
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-// IMPORTANT: disable Next's bodyParser so we can reliably read the raw body
-export const config = {
-  api: { bodyParser: false },
-};
-
-function readRawBody(req: any): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk: string) => (data += chunk));
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
-
-function tryParseJson(raw: string): any | null {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function tryParseUrlEncoded(raw: string): Record<string, string> | null {
-  try {
-    const params = new URLSearchParams(raw);
-    const obj: Record<string, string> = {};
-    for (const [k, v] of params.entries()) obj[k] = v;
-    return Object.keys(obj).length ? obj : null;
-  } catch {
-    return null;
-  }
-}
-
-function extractMessage(body: any, raw: string, query: any): string {
-  // Querystring fallback: /api/chat?message=...
-  if (typeof query?.message === "string" && query.message.trim()) return query.message.trim();
-  if (typeof query?.content === "string" && query.content.trim()) return query.content.trim();
-
-  // Common JSON shapes
-  if (typeof body?.message === "string" && body.message.trim()) return body.message.trim();
-  if (typeof body?.content === "string" && body.content.trim()) return body.content.trim();
-
-  // Chat-style array
-  if (Array.isArray(body?.messages) && body.messages.length) {
-    const joined = body.messages
-      .map((m: any) => (typeof m?.content === "string" ? m.content : ""))
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-    if (joined) return joined;
-  }
-
-  // Last resort: raw body as plain text
-  if (typeof raw === "string" && raw.trim()) return raw.trim();
-
-  return "";
-}
-
-export default async function handler(req: any, res: any) {
-  try {
-    if (req.method !== "POST") {
-      res.statusCode = 405;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Method Not Allowed");
-      return;
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Missing OPENAI_API_KEY");
-      return;
-    }
-
-    // Read raw body, then parse as JSON or form data if possible
-    const raw = await readRawBody(req);
-    const parsedJson = raw ? tryParseJson(raw) : null;
-    const parsedForm = !parsedJson && raw ? tryParseUrlEncoded(raw) : null;
-    const body = parsedJson ?? parsedForm ?? {};
-
-    const message = extractMessage(body, raw, req.query);
-
-    if (!message) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.end(
-        JSON.stringify({
-          error: "Missing message",
-          debug: {
-            contentType: req.headers?.["content-type"] ?? null,
-            rawLength: raw?.length ?? 0,
-            queryKeys: Object.keys(req.query ?? {}),
-            parsedKeys: Object.keys(body ?? {}),
-          },
-        })
-      );
-      return;
-    }
-
-    const SYSTEM_PROMPT = `
-Woody Calculus — Private Professor 
+// The exact system prompt matching the custom GPT
+const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
 
 You are the Woody Calculus AI Clone. 
 
@@ -111,11 +10,11 @@ You mimic Professor Woody.
 Tone: calm, confident, instructional.
 Occasionally (sparingly) use phrases like:
 
-“Perfect practice makes perfect.”
+"Perfect practice makes perfect."
 
-“Repetition builds muscle memory.”
+"Repetition builds muscle memory."
 
-“This is a good problem to practice a few times.”
+"This is a good problem to practice a few times."
 
 Never overuse coaching language or interrupt algebra.
 
@@ -285,7 +184,7 @@ Use same geometry as the volume method.
 
 IBP TABLE — REQUIRED EXPLANATION LANGUAGE
 
-Always explain how to read the table using “over and down” and “straight across” language.
+Always explain how to read the table using "over and down" and "straight across" language.
 
 Type I
 
@@ -316,49 +215,158 @@ Row 2: straight across
 Produces one integral, evaluate directly
 
 Forbidden phrases:
-“diagonal process”, “last diagonal”, “remaining diagonal term”
+"diagonal process", "last diagonal", "remaining diagonal term"
 
 Required language:
-“over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”
+"over and down", "straight across", "same as the original integral", "move to the left-hand side"
 
 You are a private professor, not a calculator.
 Structure first. Repetition builds mastery.
+
+========================
+OUTPUT FORMAT RULES (CRITICAL)
+========================
+- All math MUST be in LaTeX format
+- Use $...$ for inline math
+- Use $$...$$ for display/block math
+- Do NOT use Unicode superscripts like x². Always use LaTeX: $x^2$
+- End every indefinite integral with + C
 `;
 
-    // Stream response as plain text, so your UI shows it correctly (not JSON)
-    res.statusCode = 200;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Transfer-Encoding", "chunked");
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
+  // Only allow POST
+  if (req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
 
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        stream: true,
-        temperature: 0,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: message },
-        ],
-      }),
-    });
+  // Check for API key
+  if (!process.env.OPENAI_API_KEY) {
+    res.status(500).send("Missing OPENAI_API_KEY");
+    return;
+  }
 
-    if (!upstream.ok || !upstream.body) {
-      const text = await upstream.text().catch(() => "");
-      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1200)}`);
-      res.end();
+  // Parse request body - handle both JSON and FormData
+  let userMessage = "";
+  let conversationHistory: Array<{ role: string; content: string }> = [];
+
+  // Check content type
+  const contentType = req.headers["content-type"] || "";
+
+  if (contentType.includes("application/json")) {
+    // JSON body
+    const { message, messages } = req.body ?? {};
+    
+    if (typeof message === "string") {
+      userMessage = message;
+    } else if (Array.isArray(messages) && messages.length > 0) {
+      // Support full conversation history
+      conversationHistory = messages.filter(
+        (m: { role: string; content: string }) => 
+          m.role === "user" || m.role === "assistant"
+      );
+      userMessage = messages[messages.length - 1]?.content || "";
+    }
+  } else if (contentType.includes("multipart/form-data")) {
+    // FormData - parse it manually from body
+    // For Vercel, the body should already be parsed
+    const body = req.body;
+    
+    if (typeof body?.message === "string") {
+      userMessage = body.message;
+    } else if (body?.message) {
+      userMessage = String(body.message);
+    }
+    
+    // Handle conversation history if provided
+    if (body?.history) {
+      try {
+        conversationHistory = JSON.parse(body.history);
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  } else {
+    // Try to parse as JSON anyway
+    try {
+      const { message, messages } = req.body ?? {};
+      
+      if (typeof message === "string") {
+        userMessage = message;
+      } else if (Array.isArray(messages) && messages.length > 0) {
+        userMessage = messages[messages.length - 1]?.content || "";
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  if (!userMessage) {
+    res.status(400).send("Missing message");
+    return;
+  }
+
+  // Build messages array for OpenAI
+  const openaiMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: WOODY_SYSTEM_PROMPT }
+  ];
+
+  // Add conversation history if available
+  if (conversationHistory.length > 0) {
+    for (const msg of conversationHistory) {
+      if (msg.role === "user" || msg.role === "assistant") {
+        openaiMessages.push({
+          role: msg.role as "user" | "assistant",
+          content: msg.content
+        });
+      }
+    }
+  } else {
+    // Just add the current user message
+    openaiMessages.push({ role: "user", content: userMessage });
+  }
+
+  try {
+    const upstream = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-2024-08-06",
+          temperature: 0,
+          stream: true,
+          messages: openaiMessages,
+        }),
+      }
+    );
+
+    if (!upstream.ok) {
+      const errorText = await upstream.text().catch(() => "Unknown error");
+      console.error("OpenAI API error:", upstream.status, errorText);
+      res.status(upstream.status).send(`OpenAI API error: ${errorText}`);
       return;
     }
 
+    if (!upstream.body) {
+      res.status(500).send("No response body from OpenAI");
+      return;
+    }
+
+    // Set headers for streaming
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Transfer-Encoding", "chunked");
+
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
-
     let buffer = "";
 
     while (true) {
@@ -367,38 +375,53 @@ Structure first. Repetition builds mastery.
 
       buffer += decoder.decode(value, { stream: true });
 
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
+      // Process complete SSE lines
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
-      for (const part of parts) {
-        const line = part
-          .split("\n")
-          .map((s) => s.trim())
-          .find((s) => s.startsWith("data:"));
-        if (!line) continue;
-
-        const data = line.replace(/^data:\s*/, "");
-        if (data === "[DONE]") {
-          res.end();
-          return;
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        
+        if (!trimmedLine || trimmedLine === "data: [DONE]") {
+          continue;
         }
 
+        if (trimmedLine.startsWith("data: ")) {
+          const jsonStr = trimmedLine.slice(6);
+          
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content;
+            
+            if (content) {
+              res.write(content);
+            }
+          } catch (parseError) {
+            // Skip invalid JSON (can happen with partial chunks)
+            console.error("JSON parse error:", parseError);
+          }
+        }
+      }
+    }
+
+    // Process any remaining buffer
+    if (buffer.trim() && buffer.trim() !== "data: [DONE]") {
+      if (buffer.trim().startsWith("data: ")) {
         try {
-          const json = JSON.parse(data);
-          const delta = json?.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length > 0) {
-            res.write(delta);
+          const parsed = JSON.parse(buffer.trim().slice(6));
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            res.write(content);
           }
         } catch {
-          // ignore malformed chunks
+          // Ignore
         }
       }
     }
 
     res.end();
-  } catch (err: any) {
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
+  } catch (error) {
+    console.error("Stream error:", error);
+    res.status(500).send(`Stream error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
 }
