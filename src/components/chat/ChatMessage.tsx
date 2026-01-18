@@ -1,4 +1,3 @@
-// src/components/chat/ChatMessage.tsx
 import { memo, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { User, Bot, FileText, Image as ImageIcon } from 'lucide-react';
@@ -10,112 +9,127 @@ interface ChatMessageProps {
   message: ChatMessageType;
 }
 
-/**
- * Render KaTeX + safe-ish formatting.
- * Key goals:
- * - Render $$...$$, \[...\], $...$, \( ... \)
- * - Keep ANY "tabular blocks" readable (no markdown tables)
- * - Preserve alignment/spacing for tabular blocks using <pre>
- * - Do NOT convert markdown tables to HTML tables
- */
+// Small HTML escape for safe <pre> blocks
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function renderMathContent(content: string): string {
   let processed = content ?? '';
 
-  // Escape HTML first so user/model can't inject raw HTML
-  processed = processed
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  // ------------------------------------------------------------
+  // 1) FENCED CODE BLOCKS ```...```  → render as a styled <pre>
+  //    This is what your "table" currently is.
+  // ------------------------------------------------------------
+  processed = processed.replace(/```([\s\S]*?)```/g, (_, codeRaw) => {
+    const code = String(codeRaw ?? '').trim();
 
-  // Helper: wrap "tabular blocks" (plain text) in <pre>
-  // We treat a tabular block as something that contains a header line with "sign" "u" "dv"
-  // followed by at least 2 subsequent lines that start with + or -.
-  //
-  // Example:
-  // sign   u     dv
-  // +      e^x   sin(x) dx
-  // -      e^x   -cos(x) dx
-  // +      e^x   -sin(x) dx
-  //
-  // We wrap that entire block in <pre> so it stays aligned.
-  processed = processed.replace(
-    /(^|\n)(sign\s+u\s+dv\s*\n(?:[+\-]\s+.*\n?){2,})/gi,
-    (_m, lead, block) => {
-      const safeBlock = block.trimEnd();
-      return `${lead}<pre class="woody-tabular">${safeBlock}</pre>`;
-    }
-  );
+    // Detect your IBP tabular block
+    const looksLikeIbp =
+      /(^|\n)\s*sign\s+u\s+dv\s*($|\n)/i.test(code) ||
+      /(^|\n)\s*sign\s*\|\s*u\s*\|\s*dv/i.test(code);
 
-  // KaTeX: \[...\]
-  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => {
+    const header = looksLikeIbp
+      ? `<div style="
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: hsl(var(--primary));
+          margin-bottom: 10px;
+          opacity: 0.85;
+        ">IBP Tabular Setup</div>`
+      : '';
+
+    return `
+      <div style="
+        margin: 12px 0;
+        padding: 14px 14px;
+        border-radius: 14px;
+        border: 1px solid hsl(var(--border) / 0.7);
+        background: hsl(var(--surface-elevated));
+        box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
+        overflow: hidden;
+      ">
+        ${header}
+        <pre style="
+          margin: 0;
+          padding: 12px 12px;
+          border-radius: 12px;
+          border: 1px solid hsl(var(--border) / 0.55);
+          background: hsl(var(--background) / 0.55);
+          overflow-x: auto;
+          font-size: 14px;
+          line-height: 1.6;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+          white-space: pre;
+        "><code>${escapeHtml(code)}</code></pre>
+      </div>
+    `;
+  });
+
+  // ------------------------------------------------------------
+  // 2) KaTeX blocks
+  // ------------------------------------------------------------
+
+  // Display math: \[...\]
+  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
         displayMode: true,
         throwOnError: false,
       })}</div>`;
     } catch {
-      return `<code>${String(math)}</code>`;
+      return `<code>${escapeHtml(String(math))}</code>`;
     }
   });
 
-  // KaTeX: $$...$$
-  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_match, math) => {
+  // Display math: $$...$$
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
     try {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
         displayMode: true,
         throwOnError: false,
       })}</div>`;
     } catch {
-      return `<code>${String(math)}</code>`;
+      return `<code>${escapeHtml(String(math))}</code>`;
     }
   });
 
-  // KaTeX: \(...\)
-  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => {
+  // Inline math: \(...\)
+  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
     try {
       return katex.renderToString(String(math).trim(), {
         displayMode: false,
         throwOnError: false,
       });
     } catch {
-      return `<code>${String(math)}</code>`;
+      return `<code>${escapeHtml(String(math))}</code>`;
     }
   });
 
-  // KaTeX: $...$  (avoid spanning newlines)
-  processed = processed.replace(/\$([^\$\n]+?)\$/g, (_match, math) => {
+  // Inline math: $...$
+  processed = processed.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
     try {
       return katex.renderToString(String(math).trim(), {
         displayMode: false,
         throwOnError: false,
       });
     } catch {
-      return `<code>${String(math)}</code>`;
+      return `<code>${escapeHtml(String(math))}</code>`;
     }
   });
 
-  // Bold **text**
+  // Markdown-style bold **text**
   processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
-  // IMPORTANT: Do NOT convert markdown tables to HTML tables.
-  // (Leaving any table-like text alone is safer.)
-
-  // Convert newlines to <br>, but DO NOT touch content inside <pre> blocks
-  // Approach: split by <pre ...>...</pre> and only replace newlines outside.
-  const parts: string[] = [];
-  const preRegex = /<pre class="woody-tabular">[\s\S]*?<\/pre>/gi;
-
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = preRegex.exec(processed)) !== null) {
-    const start = match.index;
-    const end = preRegex.lastIndex;
-    parts.push(processed.slice(lastIndex, start).replace(/\n/g, '<br>'));
-    parts.push(match[0]); // keep <pre> block untouched
-    lastIndex = end;
-  }
-  parts.push(processed.slice(lastIndex).replace(/\n/g, '<br>'));
-  processed = parts.join('');
+  // Newlines -> <br> (after code blocks have been handled)
+  processed = processed.replace(/\n/g, '<br>');
 
   return processed;
 }
@@ -185,7 +199,7 @@ export const ChatMessage = memo(function ChatMessage({ message }: ChatMessagePro
                   ) : (
                     <ImageIcon className="w-3 h-3 text-primary" />
                   )}
-                  <span className="truncate max-w-[140px] text-muted-foreground">{file.name}</span>
+                  <span className="truncate max-w-[100px] text-muted-foreground">{file.name}</span>
                 </div>
               ))}
             </div>
