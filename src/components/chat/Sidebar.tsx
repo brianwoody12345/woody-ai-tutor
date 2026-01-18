@@ -7,8 +7,6 @@ const topics: Topic[] = [
   { id: 'series', label: 'Series' },
   { id: 'power-series-taylor', label: 'Power Series & Taylor' },
   { id: 'applications-integration', label: 'Applications of Integration' },
-  { id: 'calc-iii', label: 'Calculus III', disabled: true, comingSoon: true },
-  { id: 'differential-equations', label: 'Differential Equations', disabled: true, comingSoon: true },
 ];
 
 const topicIcons: Record<TopicId, React.ElementType> = {
@@ -37,7 +35,7 @@ export function Sidebar({ activeTopic, onTopicChange }: SidebarProps) {
         >
           <div className="flex items-center gap-2.5 mb-2">
             <h1 className="text-lg font-semibold text-foreground tracking-tight">
-              Woody Calculus II
+              Woody Calculus Clone AI
             </h1>
             <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest bg-primary/15 text-primary rounded-sm border border-primary/25">
               Beta
