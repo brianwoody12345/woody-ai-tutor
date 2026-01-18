@@ -78,7 +78,7 @@ export function ChatArea({ messages, isTyping }: ChatAreaProps) {
           </div>
           <div className="flex flex-col">
             <p className="text-[10px] font-semibold uppercase tracking-wider mb-1.5 px-0.5 text-primary/60">
-              Professor Woody
+              Professor Woody AI Clone
             </p>
             <div 
               className="px-4 py-3 rounded-xl rounded-tl-sm border border-border/60"
