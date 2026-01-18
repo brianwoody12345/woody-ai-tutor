@@ -1,16 +1,19 @@
 // api/chat.ts
 import formidable from "formidable";
 import fs from "fs";
-import pdfParse from "pdf-parse";
+import { createRequire } from "module";
 import { WOODY_SYSTEM_PROMPT } from "../src/constants/systemPrompt";
 
 export const runtime = "nodejs";
 
 export const config = {
-  api: {
-    bodyParser: false,
-  },
+  api: { bodyParser: false },
 };
+
+// ESM-safe require() for pdf-parse
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pdfParse: (data: Buffer) => Promise<{ text: string }> = require("pdf-parse");
 
 function collectFiles(files: any): any[] {
   const out: any[] = [];
@@ -23,21 +26,21 @@ function collectFiles(files: any): any[] {
 }
 
 /**
- * Extract a single numbered problem from plaintext.
- * Looks for "16)" or "16." at the start of a line and grabs until the next "17)" etc.
+ * Extract a single numbered problem block from text.
+ * Finds "16)" or "16." at the start of a line and captures until next numbered item.
  */
-function extractProblemBlock(text: string, n: number): string | "" {
+function extractProblemBlock(text: string, n: number): string {
   const escaped = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const start = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
-  const m = text.match(start);
+  const startRe = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
+  const m = startRe.exec(text);
   if (!m || m.index == null) return "";
 
   const startIdx = m.index + (m[1] ? m[1].length : 0);
   const rest = text.slice(startIdx);
 
-  // Next problem: newline + spaces + digits + ) or .
-  const next = rest.slice(1).search(/\n\s*\d+\s*[\)\.]\s*/m);
-  const endIdx = next === -1 ? text.length : startIdx + 1 + next;
+  // next problem number pattern
+  const nextIdx = rest.slice(1).search(/\n\s*\d+\s*[\)\.]\s*/m);
+  const endIdx = nextIdx === -1 ? text.length : startIdx + 1 + nextIdx;
 
   return text.slice(startIdx, endIdx).trim();
 }
@@ -52,7 +55,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const MAX_FILES = 5;
-    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB each
+    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
     const MAX_OUTPUT_TOKENS = 2500;
 
     let fields: any = {};
@@ -118,25 +121,25 @@ export default async function handler(req: any, res: any) {
 
     let pdfText = "";
     for (const f of fileList) {
-      if (!f) continue;
+      try {
+        if (!f) continue;
+        if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES) continue;
+        if (f.mimetype !== "application/pdf" || !f.filepath) continue;
 
-      const size = f.size || 0;
-      if (size > MAX_FILE_SIZE_BYTES) continue;
-
-      if (f.mimetype === "application/pdf" && f.filepath) {
         const buf = fs.readFileSync(f.filepath);
         const parsed = await pdfParse(buf);
-        pdfText += `\n\n${parsed.text || ""}`;
+        if (parsed?.text) pdfText += `\n\n${parsed.text}`;
+      } catch {
+        // swallow PDF parsing errors so function still works for non-PDF or partial failures
       }
     }
 
     // -------------------------
-    // If user said "do problem 16", pull ONLY that problem
+    // If user says "do problem 16", extract ONLY that problem
     // -------------------------
     const probMatch =
-      message.match(/\bproblem\s+(\d+)\b/i) ||
       message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
-      message.match(/\b#\s*(\d+)\b/i);
+      message.match(/\bproblem\s+(\d+)\b/i);
 
     let extractedProblem = "";
     if (probMatch && pdfText) {
@@ -144,10 +147,9 @@ export default async function handler(req: any, res: any) {
       if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
     }
 
-    // Fallback: if we didn't find a clean block, still include some text
     const contextToSend =
       extractedProblem ||
-      (pdfText ? pdfText.slice(0, 80_000) : ""); // clip to keep requests sane
+      (pdfText ? pdfText.slice(0, 80_000) : "");
 
     const routingInstruction = probMatch
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
@@ -167,7 +169,7 @@ export default async function handler(req: any, res: any) {
     res.setHeader("Connection", "keep-alive");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const model = process.env.OPENAI_MODEL || "gpt-4o"; // set OPENAI_MODEL on Vercel if you want a specific one
+    const model = process.env.OPENAI_MODEL || "gpt-4o";
 
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -192,9 +194,7 @@ export default async function handler(req: any, res: any) {
 
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => "");
-      res.write(
-        `Upstream error (${upstream.status}). ${text ? text.slice(0, 800) : ""}`
-      );
+      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1000)}`);
       res.end();
       return;
     }
@@ -239,8 +239,9 @@ export default async function handler(req: any, res: any) {
 
     res.end();
   } catch (err: any) {
+    // Make the failure visible (so you can actually fix it)
     res.statusCode = 500;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(`Server error: ${err?.message || "unknown"}`);
+    res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
   }
 }
