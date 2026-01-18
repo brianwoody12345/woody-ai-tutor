@@ -40,14 +40,11 @@ function extractProblemBlock(text: string, n: number): string {
   return text.slice(startIdx, endIdx).trim();
 }
 
-// Very light heuristic to decide when we should allow an IBP table.
-// We only enable if the user explicitly asks for IBP or the integrand strongly suggests it.
+// Conservative trigger for IBP-table mode
 function shouldAllowIbpTable(message: string): boolean {
   const m = message.toLowerCase();
   if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
 
-  // Common IBP trigger patterns: x ln x, x e^x, x sin x, x cos x, polynomial * trig/exp
-  // This is intentionally conservative.
   const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
   const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
   const hasExp = /\be\^|\bexp\b/.test(m);
@@ -68,7 +65,6 @@ export default async function handler(req: any, res: any) {
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
     const MAX_OUTPUT_TOKENS = 2500;
 
-    // ✅ Inline prompt here so we avoid cross-folder imports that can crash on Vercel
     const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
 
 You teach Calculus 2 using structure, repetition, and method selection, not shortcuts.
@@ -89,6 +85,7 @@ IBP RULES
 - Tabular method ONLY (no IBP formula).
 - MUST begin by naming the IBP type explicitly (Type I / II / III).
 - Required language: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
+- Never tell the student to "do IBP again" for Type I tabular problems.
 
 Trig Substitution
 - MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
@@ -154,7 +151,6 @@ Structure first. Repetition builds mastery.
       return;
     }
 
-    // ✅ Only require pdf-parse if we actually have PDFs.
     const fileList = collectFiles(files);
     const hasPdf = fileList.some(
       (f) => f?.mimetype === "application/pdf" && f?.filepath
@@ -210,26 +206,39 @@ Structure first. Repetition builds mastery.
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
       : "";
 
-    // ✅ TABLE MODE: default OFF (preserves your working behavior)
     const allowIbpTable = shouldAllowIbpTable(message);
 
-    // When allowed, require the exact 3-column table format like your Custom GPT screenshot
+    // 🔥 UPDATED: EXACT table behavior per type
     const tableModeGuardrails = allowIbpTable
       ? `
 IBP TABLE MODE (ONLY if you actually use IBP):
-- After you state the IBP type, include ONE clean Markdown table with EXACTLY 3 columns:
-  sign | u | dv
-- Use short entries in cells (e.g., $e^x$, $\\cos x\\,dx$).
-- Use + / − signs in the sign column.
-- Do NOT create any other tables anywhere in the solution.
-- After the table, explain “over and down” and “straight across” in sentences.
+- You may include tables ONLY for IBP, and NEVER more than ONE table total.
+- ALWAYS state the IBP type first (Type I / Type II / Type III).
+
+Type II (exponential × trig) — EXACT requirements:
+- Produce EXACTLY ONE 3-row table with columns: sign | u | dv
+- Rows must be: + then − then +
+- The 3rd row is the “straight across” row that produces the last integral.
+- Do NOT create a second table. Do NOT say “apply IBP again.” Do NOT restart with a new table.
+- After the single table:
+  - Say: “Multiply over and down on the first row.”
+  - Say: “Multiply over and down on the second row.”
+  - Say: “Multiply straight across on the third row to get the last integral.”
+  - Then: “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
+
+Type I (polynomial × trig/exponential) — EXACT requirements:
+- You may show one table if desired, but the final answer must be ONLY the sum of over-and-down products.
+- Do NOT write extra integrals like “−∫ … + ∫ … − ∫ …”. No recursion.
+- Do NOT say “solve using IBP again.” Just finish from the tabular products.
+
+Type III (ln or inverse trig) — requirements:
+- One table max. Row 1 over-and-down, Row 2 straight across. Evaluate remaining integral directly.
 `
       : `
 HARD OUTPUT CONSTRAINTS:
 - Do NOT output any tables (no Markdown tables, no ASCII tables, no columns).
 `;
 
-    // Keep your other guardrails (safe, consistent)
     const coreGuardrails = `
 CORE GUARDRAILS:
 - If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
