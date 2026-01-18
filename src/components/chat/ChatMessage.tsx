@@ -1,339 +1,466 @@
-// api/chat.ts
-import formidable from "formidable";
-import fs from "fs";
-import { createRequire } from "module";
+import { memo, useMemo } from 'react';
+import { motion } from 'framer-motion';
+import { User, Bot, FileText, Image as ImageIcon } from 'lucide-react';
+import 'katex/dist/katex.min.css';
+import katex from 'katex';
+import type { ChatMessage as ChatMessageType } from '@/types/chat';
 
-export const runtime = "nodejs";
+interface ChatMessageProps {
+  message: ChatMessageType;
+}
 
-export const config = {
-  api: { bodyParser: false },
-};
+function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
-const require = createRequire(import.meta.url);
+type ParsedIbpRow = { sign: string; u: string; dv: string };
 
-function collectFiles(files: any): any[] {
-  const out: any[] = [];
-  for (const key of Object.keys(files || {})) {
-    const v = files[key];
-    if (Array.isArray(v)) out.push(...v);
-    else if (v) out.push(v);
+function normalizeSign(raw: string): string {
+  const s = String(raw ?? '').trim();
+  if (s === '+') return '+';
+  // Accept common unicode dashes/minus and normalize to '-'
+  if (s === '-' || s === '−' || s === '–' || s === '—') return '-';
+  return '';
+}
+
+function stripMathDelimiters(s: string): string {
+  const t = String(s ?? '').trim();
+  if (t.startsWith('$$') && t.endsWith('$$')) return t.slice(2, -2).trim();
+  if (t.startsWith('$') && t.endsWith('$')) return t.slice(1, -1).trim();
+  return t;
+}
+
+function renderLatexOrText(raw: string, opts?: { color?: string; displayMode?: boolean }): string {
+  const color = opts?.color;
+  const displayMode = !!opts?.displayMode;
+
+  const tex = stripMathDelimiters(raw);
+
+  // Attempt KaTeX on anything that looks math-ish; fallback to text.
+  const looksMath =
+    /\\[a-zA-Z]+/.test(tex) ||
+    /[_^{}]/.test(tex) ||
+    /[=()]/.test(tex) ||
+    /sin|cos|tan|sec|csc|cot|ln|log|exp|dx|e\^/i.test(tex);
+
+  if (!looksMath) {
+    const safe = escapeHtml(raw);
+    return color ? `<span style="color:${color};">${safe}</span>` : safe;
   }
-  return out;
-}
 
-/**
- * Extract a single numbered problem block from text.
- * Finds "16)" or "16." at the start of a line and captures until next numbered item.
- */
-function extractProblemBlock(text: string, n: number): string {
-  const escaped = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const startRe = new RegExp(`(^|\\n)\\s*${escaped}\\s*[\\)\\.]\\s*`, "m");
-  const m = startRe.exec(text);
-  if (!m || m.index == null) return "";
-
-  const startIdx = m.index + (m[1] ? m[1].length : 0);
-  const rest = text.slice(startIdx);
-
-  const nextIdx = rest.slice(1).search(/\n\s*\d+\s*[\)\.]\s*/m);
-  const endIdx = nextIdx === -1 ? text.length : startIdx + 1 + nextIdx;
-
-  return text.slice(startIdx, endIdx).trim();
-}
-
-// Conservative trigger for IBP-table mode
-function shouldAllowIbpTable(message: string): boolean {
-  const m = message.toLowerCase();
-  if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
-
-  const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
-  const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
-  const hasExp = /\be\^|\bexp\b/.test(m);
-  const hasLn = /\bln\b|\blog\b/.test(m);
-  return hasPoly && (hasTrig || hasExp || hasLn);
-}
-
-export default async function handler(req: any, res: any) {
   try {
-    if (req.method !== "POST") {
-      res.statusCode = 405;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Method Not Allowed");
-      return;
-    }
-
-    const MAX_FILES = 5;
-    const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
-    const MAX_OUTPUT_TOKENS = 2500;
-
-    const WOODY_SYSTEM_PROMPT = `Woody Calculus II — Private Professor
-
-You teach Calculus 2 using structure, repetition, and method selection, not shortcuts.
-
-Tone: calm, confident, instructional.
-Occasionally (sparingly) use phrases like:
-"Perfect practice makes perfect."
-"Repetition builds muscle memory."
-"This is a good problem to practice a few times."
-Never overuse coaching language or interrupt algebra.
-
-ABSOLUTE OUTPUT RULES
-- All math in LaTeX: use $...$ inline and $$...$$ for display.
-- Do NOT use unicode superscripts like x². Use LaTeX: $x^2$.
-- End every indefinite integral with + C.
-
-IBP RULES
-- Tabular method ONLY (no IBP formula).
-- MUST begin by naming the IBP type explicitly (Type I / II / III).
-- Required language: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
-- Never tell the student to "do IBP again" for Type I tabular problems.
-
-Trig Substitution
-- MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
-- Always convert back to x.
-
-You are a private professor, not a calculator.
-Structure first. Repetition builds mastery.
-`;
-
-    let fields: any = {};
-    let files: any = {};
-
-    const contentType = String(req.headers?.["content-type"] || "");
-    const isMultipart = contentType.includes("multipart/form-data");
-
-    if (isMultipart) {
-      const form = formidable({
-        multiples: true,
-        maxFiles: MAX_FILES,
-        maxFileSize: MAX_FILE_SIZE_BYTES,
-        allowEmptyFiles: true,
-      });
-
-      ({ fields, files } = await new Promise<{ fields: any; files: any }>(
-        (resolve, reject) => {
-          form.parse(req, (err: any, flds: any, fls: any) => {
-            if (err) reject(err);
-            else resolve({ fields: flds, files: fls });
-          });
-        }
-      ));
-    } else {
-      const raw = await new Promise<string>((resolve, reject) => {
-        let data = "";
-        req.setEncoding("utf8");
-        req.on("data", (chunk: string) => (data += chunk));
-        req.on("end", () => resolve(data));
-        req.on("error", reject);
-      });
-
-      try {
-        fields = raw ? JSON.parse(raw) : {};
-      } catch {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Invalid JSON body");
-        return;
-      }
-    }
-
-    const message = String(fields.message ?? "").trim();
-    if (!message) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Missing message");
-      return;
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Server missing OPENAI_API_KEY");
-      return;
-    }
-
-    const fileList = collectFiles(files);
-    const hasPdf = fileList.some(
-      (f) => f?.mimetype === "application/pdf" && f?.filepath
-    );
-
-    let pdfText = "";
-
-    if (hasPdf) {
-      let pdfParse: ((data: Buffer) => Promise<{ text: string }>) | null = null;
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        pdfParse = require("pdf-parse");
-      } catch (e: any) {
-        res.statusCode = 500;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end(
-          `Server error: could not load pdf-parse.\n` +
-            `Make sure it exists in dependencies.\n` +
-            `${e?.message || e}`
-        );
-        return;
-      }
-
-      for (const f of fileList) {
-        try {
-          if (!f) continue;
-          if (typeof f.size === "number" && f.size > MAX_FILE_SIZE_BYTES) continue;
-          if (f.mimetype !== "application/pdf" || !f.filepath) continue;
-
-          const buf = fs.readFileSync(f.filepath);
-          const parsed = await pdfParse(buf);
-          if (parsed?.text) pdfText += `\n\n${parsed.text}`;
-        } catch {
-          // ignore per-file parse errors
-        }
-      }
-    }
-
-    const probMatch =
-      message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
-      message.match(/\bproblem\s+(\d+)\b/i);
-
-    let extractedProblem = "";
-    if (probMatch && pdfText) {
-      const n = Number(probMatch[1]);
-      if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
-    }
-
-    const contextToSend =
-      extractedProblem || (pdfText ? pdfText.slice(0, 80_000) : "");
-
-    const routingInstruction = probMatch
-      ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
-      : "";
-
-    const allowIbpTable = shouldAllowIbpTable(message);
-
-    // 🔥 UPDATED: EXACT table behavior per type
-    const tableModeGuardrails = allowIbpTable
-      ? `
-IBP TABLE MODE (ONLY if you actually use IBP):
-- You may include tables ONLY for IBP, and NEVER more than ONE table total.
-- ALWAYS state the IBP type first (Type I / Type II / Type III).
-
-Type II (exponential × trig) — EXACT requirements:
-- Produce EXACTLY ONE 3-row table with columns: sign | u | dv
-- Rows must be: + then − then +
-- The 3rd row is the “straight across” row that produces the last integral.
-- Do NOT create a second table. Do NOT say “apply IBP again.” Do NOT restart with a new table.
-- After the single table:
-  - Say: “Multiply over and down on the first row.”
-  - Say: “Multiply over and down on the second row.”
-  - Say: “Multiply straight across on the third row to get the last integral.”
-  - Then: “That last integral is the same as the original integral. Move it to the left-hand side and solve.”
-
-Type I (polynomial × trig/exponential) — EXACT requirements:
-- You may show one table if desired, but the final answer must be ONLY the sum of over-and-down products.
-- Do NOT write extra integrals like “−∫ … + ∫ … − ∫ …”. No recursion.
-- Do NOT say “solve using IBP again.” Just finish from the tabular products.
-
-Type III (ln or inverse trig) — requirements:
-- One table max. Row 1 over-and-down, Row 2 straight across. Evaluate remaining integral directly.
-`
-      : `
-HARD OUTPUT CONSTRAINTS:
-- Do NOT output any tables (no Markdown tables, no ASCII tables, no columns).
-`;
-
-    const coreGuardrails = `
-CORE GUARDRAILS:
-- If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
-- If trig substitution is used: explicitly name the matching radical form first.
-- LaTeX for all math. No unicode superscripts.
-`;
-
-    const userContent =
-      `${tableModeGuardrails}\n` +
-      `${coreGuardrails}\n\n` +
-      `${routingInstruction}\n\n` +
-      `Student message:\n${message}\n\n` +
-      (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
-
-    // -------------------------
-    // Stream response
-    // -------------------------
-    res.statusCode = 200;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    const model = process.env.OPENAI_MODEL || "gpt-4o";
-
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        temperature: 0.0,
-        top_p: 1.0,
-        frequency_penalty: 0.0,
-        presence_penalty: 0.0,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        messages: [
-          { role: "system", content: WOODY_SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-      }),
-    });
-
-    if (!upstream.ok || !upstream.body) {
-      const text = await upstream.text().catch(() => "");
-      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1000)}`);
-      res.end();
-      return;
-    }
-
-    const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
-
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-
-      for (const part of parts) {
-        const line = part
-          .split("\n")
-          .map((s) => s.trim())
-          .find((s) => s.startsWith("data:"));
-        if (!line) continue;
-
-        const data = line.replace(/^data:\s*/, "");
-        if (data === "[DONE]") {
-          res.end();
-          return;
-        }
-
-        try {
-          const json = JSON.parse(data);
-          const delta = json?.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length > 0) {
-            res.write(delta);
-          }
-        } catch {
-          // ignore malformed chunks
-        }
-      }
-    }
-
-    res.end();
-  } catch (err: any) {
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
+    const html = katex.renderToString(tex, { throwOnError: false, displayMode });
+    return color ? `<span style="color:${color};">${html}</span>` : html;
+  } catch {
+    const safe = escapeHtml(raw);
+    return color ? `<span style="color:${color};">${safe}</span>` : safe;
   }
 }
+
+function isMarkdownSeparatorLine(line: string): boolean {
+  // Matches lines like: |---|---|---| or ---|---|---
+  const l = line.replace(/\s/g, '');
+  return /^(\|?-{3,}\|)+-?\|?$/.test(l);
+}
+
+function parseIbpTableFromCode(codeRaw: string): { rows: ParsedIbpRow[] } | null {
+  const code = String(codeRaw ?? '').trim();
+  const lines = code.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  // Accept header formats:
+  // 1) "sign | u | dv"
+  // 2) "sign   u   dv" (spaces)
+  const headerIdx = lines.findIndex((l) =>
+    /^sign(\s+|\s*\|\s*)u(\s+|\s*\|\s*)dv$/i.test(l)
+  );
+  if (headerIdx === -1) return null;
+
+  const dataLines = lines.slice(headerIdx + 1);
+
+  const rows: ParsedIbpRow[] = [];
+
+  for (const l0 of dataLines) {
+    const l = l0.trim();
+    if (!l) continue;
+    if (isMarkdownSeparatorLine(l)) continue;
+
+    let sign = '';
+    let u = '';
+    let dv = '';
+
+    if (l.includes('|')) {
+      // Pipe table row
+      const parts = l
+        .split('|')
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+      if (parts.length >= 3) {
+        sign = normalizeSign(parts[0]);
+        u = parts[1] ?? '';
+        dv = parts.slice(2).join(' | ');
+      }
+    } else {
+      // Space-separated columns (2+ spaces)
+      const parts = l.split(/\s{2,}/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+        sign = normalizeSign(parts[0]);
+        u = parts[1] ?? '';
+        dv = parts.slice(2).join(' ');
+      }
+    }
+
+    if (!sign || !u || !dv) continue;
+    rows.push({ sign, u, dv });
+
+    if (rows.length >= 6) break;
+  }
+
+  if (rows.length >= 2) return { rows };
+  return null;
+}
+
+function renderIbpPrettyTable(rows: ParsedIbpRow[]): string {
+  const rows3 = rows.slice(0, 3);
+
+  const rowHtml = rows3
+    .map((r) => {
+      const signColor =
+        r.sign === '+'
+          ? 'hsl(var(--primary))'
+          : 'hsl(var(--destructive, 0 84% 60%))';
+
+      const uHtml = renderLatexOrText(r.u);
+      const dvHtml = renderLatexOrText(r.dv, { color: '#1dd3c5' });
+
+      return `
+        <div style="
+          display: grid;
+          grid-template-columns: 60px 1fr 1.6fr;
+          gap: 10px;
+          align-items: center;
+          padding: 12px 12px;
+          border-top: 1px solid hsl(var(--border) / 0.55);
+          position: relative;
+          z-index: 2;
+        ">
+          <div style="
+            font-weight: 900;
+            font-size: 14px;
+            text-align: center;
+            color: ${signColor};
+          ">${escapeHtml(r.sign)}</div>
+
+          <div style="
+            font-size: 14px;
+            line-height: 1.6;
+            color: hsl(var(--foreground));
+            overflow-wrap: anywhere;
+          ">${uHtml}</div>
+
+          <div style="
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-wrap: anywhere;
+          ">${dvHtml}</div>
+        </div>
+      `;
+    })
+    .join('');
+
+  // SVG overlay arrows (green diagonals + red straight across)
+  const arrowsSvg = `
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+      opacity: 0.95;
+    ">
+      <defs>
+        <marker id="arrowG" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#37b24d"></path>
+        </marker>
+        <marker id="arrowR" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#ff3b3b"></path>
+        </marker>
+      </defs>
+
+      <!-- green diagonals: between u and dv columns -->
+      <path d="M 56 36 L 68 52" stroke="#37b24d" stroke-width="2.5" fill="none" marker-end="url(#arrowG)"></path>
+      <path d="M 56 57 L 68 73" stroke="#37b24d" stroke-width="2.5" fill="none" marker-end="url(#arrowG)"></path>
+
+      <!-- red straight-across near bottom -->
+      <path d="M 36 94 L 92 94" stroke="#ff3b3b" stroke-width="3" fill="none" marker-end="url(#arrowR)"></path>
+    </svg>
+  `;
+
+  return `
+    <div style="
+      margin: 12px 0;
+      padding: 14px 14px;
+      border-radius: 14px;
+      border: 1px solid hsl(var(--border) / 0.7);
+      background: hsl(var(--surface-elevated));
+      box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
+      overflow: hidden;
+      position: relative;
+    ">
+      <div style="
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.10em;
+        text-transform: uppercase;
+        color: hsl(var(--primary));
+        margin-bottom: 10px;
+        opacity: 0.85;
+      ">IBP TABULAR SETUP</div>
+
+      <div style="
+        border-radius: 12px;
+        border: 1px solid hsl(var(--border) / 0.55);
+        background: hsl(var(--background) / 0.55);
+        overflow: hidden;
+        position: relative;
+      ">
+        ${arrowsSvg}
+
+        <div style="
+          display: grid;
+          grid-template-columns: 60px 1fr 1.6fr;
+          gap: 10px;
+          align-items: center;
+          padding: 10px 12px;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.10em;
+          text-transform: uppercase;
+          color: hsl(var(--muted-foreground));
+          position: relative;
+          z-index: 2;
+        ">
+          <div style="text-align:center;">sign</div>
+          <div>u</div>
+          <div>dv</div>
+        </div>
+
+        ${rowHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderCodeCard(codeRaw: string): string {
+  const code = String(codeRaw ?? '').trim();
+
+  // If it looks like the IBP table, pretty render it.
+  const parsed = parseIbpTableFromCode(code);
+  if (parsed) {
+    return renderIbpPrettyTable(parsed.rows);
+  }
+
+  // Otherwise: normal code card.
+  return `
+    <div style="
+      margin: 12px 0;
+      padding: 14px 14px;
+      border-radius: 14px;
+      border: 1px solid hsl(var(--border) / 0.7);
+      background: hsl(var(--surface-elevated));
+      box-shadow: 0 1px 0 hsl(var(--border) / 0.25) inset;
+      overflow: hidden;
+    ">
+      <pre style="
+        margin: 0;
+        padding: 12px 12px;
+        border-radius: 12px;
+        border: 1px solid hsl(var(--border) / 0.55);
+        background: hsl(var(--background) / 0.55);
+        overflow-x: auto;
+        font-size: 14px;
+        line-height: 1.6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        white-space: pre;
+      "><code>${escapeHtml(code)}</code></pre>
+    </div>
+  `;
+}
+
+function renderMathContent(content: string): string {
+  let processed = content ?? '';
+
+  // 1) Extract fenced code blocks FIRST
+  const codeBlocks: string[] = [];
+  processed = processed.replace(/```([\s\S]*?)```/g, (_, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(String(code ?? ''));
+    return `@@CODEBLOCK_${idx}@@`;
+  });
+
+  // 2) KaTeX rendering (non-code only)
+  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
+    try {
+      return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
+        displayMode: true,
+        throwOnError: false,
+      })}</div>`;
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+    try {
+      return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
+        displayMode: true,
+        throwOnError: false,
+      })}</div>`;
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
+    try {
+      return katex.renderToString(String(math).trim(), {
+        displayMode: false,
+        throwOnError: false,
+      });
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  processed = processed.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
+    try {
+      return katex.renderToString(String(math).trim(), {
+        displayMode: false,
+        throwOnError: false,
+      });
+    } catch {
+      return `<code>${escapeHtml(String(math))}</code>`;
+    }
+  });
+
+  // Bold **text**
+  processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Newlines -> <br>
+  processed = processed.replace(/\n/g, '<br>');
+
+  // 3) Put code blocks back at the end
+  processed = processed.replace(/@@CODEBLOCK_(\d+)@@/g, (_, nStr) => {
+    const n = Number(nStr);
+    const code = codeBlocks[n] ?? '';
+    return renderCodeCard(code);
+  });
+
+  return processed;
+}
+
+export const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
+  const isUser = message.role === 'user';
+
+  const renderedContent = useMemo(() => {
+    return renderMathContent(message.content);
+  }, [message.content]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
+      className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}
+    >
+      {/* Avatar */}
+      <div
+        className={`
+          w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5
+          ${isUser ? 'bg-secondary border border-border' : 'bg-primary/12 border border-primary/20'}
+        `}
+      >
+        {isUser ? (
+          <User className="w-4 h-4 text-muted-foreground" />
+        ) : (
+          <Bot className="w-4 h-4 text-primary" />
+        )}
+      </div>
+
+      {/* Message Content */}
+      <div className={`flex-1 max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
+        {/* Role Label */}
+        <p
+          className={`text-[10px] font-semibold uppercase tracking-wider mb-1.5 px-0.5 ${
+            isUser ? 'text-right text-muted-foreground/60' : 'text-left text-primary/60'
+          }`}
+        >
+          {isUser ? 'You' : 'Professor Woody AI Clone'}
+        </p>
+
+        <div
+          className={`
+            rounded-xl px-4 py-3 message-content
+            ${
+              isUser
+                ? 'bg-secondary border border-border text-secondary-foreground rounded-tr-sm'
+                : 'bg-surface-elevated border border-border/60 text-foreground rounded-tl-sm'
+            }
+          `}
+          style={{
+            backgroundColor: isUser ? undefined : 'hsl(var(--surface-elevated))',
+          }}
+        >
+          {/* Attached Files */}
+          {message.files && message.files.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3 pb-2.5 border-b border-border/40">
+              {message.files.map((file) => (
+                <div
+                  key={file.id}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-background/60 text-[11px] font-medium border border-border/40"
+                >
+                  {file.type === 'pdf' ? (
+                    <FileText className="w-3 h-3 text-primary" />
+                  ) : (
+                    <ImageIcon className="w-3 h-3 text-primary" />
+                  )}
+                  <span className="truncate max-w-[100px] text-muted-foreground">{file.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Message Text with Math */}
+          <div
+            className="text-[16px] leading-[1.8] tracking-[-0.01em]"
+            dangerouslySetInnerHTML={{ __html: renderedContent }}
+          />
+
+          {/* Streaming indicator */}
+          {message.isStreaming && (
+            <span className="inline-flex gap-1 ml-1.5 align-middle">
+              <span className="w-1 h-1 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-1 h-1 rounded-full bg-primary animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-1 h-1 rounded-full bg-primary animate-bounce" style={{ animationDelay: '300ms' }} />
+            </span>
+          )}
+        </div>
+
+        {/* Timestamp */}
+        <p
+          className={`text-[9px] font-medium text-muted-foreground/50 mt-1.5 px-0.5 tracking-wide ${
+            isUser ? 'text-right' : 'text-left'
+          }`}
+        >
+          {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </p>
+      </div>
+    </motion.div>
+  );
+});
