@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Paperclip, Plus } from 'lucide-react';
+import { Send, Plus } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,55 +19,70 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
-    
+
     const newFiles: UploadedFile[] = selectedFiles
-      .filter(file => {
+      .filter((file) => {
         const isPdf = file.type === 'application/pdf';
         const isImage = file.type.startsWith('image/');
         return isPdf || isImage;
       })
-      .map(file => {
+      .map((file) => {
         const isPdf = file.type === 'application/pdf';
         return {
           id: crypto.randomUUID(),
           file,
           name: file.name,
-          type: isPdf ? 'pdf' as const : 'image' as const,
+          type: isPdf ? ('pdf' as const) : ('image' as const),
           preview: !isPdf ? URL.createObjectURL(file) : undefined,
         };
       });
 
-    setFiles(prev => [...prev, ...newFiles]);
+    setFiles((prev) => [...prev, ...newFiles]);
+
+    // reset file input so selecting the same file again triggers change
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   }, []);
 
   const handleRemoveFile = useCallback((id: string) => {
-    setFiles(prev => {
-      const file = prev.find(f => f.id === id);
+    setFiles((prev) => {
+      const file = prev.find((f) => f.id === id);
       if (file?.preview) {
         URL.revokeObjectURL(file.preview);
       }
-      return prev.filter(f => f.id !== id);
+      return prev.filter((f) => f.id !== id);
     });
   }, []);
 
   const handleSend = useCallback(() => {
+    // ✅ Hard stop if streaming/loading
+    if (isLoading) return;
+
     const trimmedMessage = message.trim();
     if (!trimmedMessage && files.length === 0) return;
-    
+
     onSend(trimmedMessage, files);
+
     setMessage('');
     setFiles([]);
-  }, [message, files, onSend]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  }, [handleSend]);
+    // optional: keep focus in the box after send
+    textareaRef.current?.focus();
+  }, [message, files, onSend, isLoading]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // ✅ Don’t submit while loading (prevents double API calls)
+        if (isLoading) return;
+
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend, isLoading]
+  );
 
   return (
     <div className="border-t border-border bg-card/90 backdrop-blur-md p-4">
@@ -75,12 +90,8 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
       <AnimatePresence>
         {files.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3 pb-3 border-b border-border/40">
-            {files.map(file => (
-              <FileChip
-                key={file.id}
-                file={file}
-                onRemove={handleRemoveFile}
-              />
+            {files.map((file) => (
+              <FileChip key={file.id} file={file} onRemove={handleRemoveFile} />
             ))}
           </div>
         )}
@@ -98,15 +109,20 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
             onChange={handleFileSelect}
             className="hidden"
             id="file-upload"
+            disabled={isLoading}
           />
           <Button
             type="button"
             variant="outline"
             size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            className="h-11 w-11 rounded-lg border-border/80 bg-surface-elevated hover:bg-surface-hover hover:border-primary/40 transition-all"
+            onClick={() => {
+              if (isLoading) return;
+              fileInputRef.current?.click();
+            }}
+            disabled={isLoading}
+            className="h-11 w-11 rounded-lg border-border/80 bg-surface-elevated hover:bg-surface-hover hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
-              backgroundColor: 'hsl(var(--surface-elevated))'
+              backgroundColor: 'hsl(var(--surface-elevated))',
             }}
           >
             <Plus className="w-4 h-4 text-muted-foreground" />
@@ -124,7 +140,7 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
             disabled={isLoading}
             className="min-h-[44px] max-h-[180px] resize-none rounded-lg border-border/80 bg-input text-foreground placeholder:text-muted-foreground/60 focus-visible:ring-1 focus-visible:ring-primary/50 focus-visible:ring-offset-0 focus-visible:border-primary/50 pr-4 py-2.5 text-[14px] leading-relaxed font-medium"
             style={{
-              backgroundColor: 'hsl(var(--input))'
+              backgroundColor: 'hsl(var(--input))',
             }}
             rows={1}
           />
@@ -144,7 +160,7 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
       {/* Helper Text */}
       <p className="text-[10px] text-muted-foreground/50 mt-2.5 text-center font-medium tracking-wide">
-        Shift + Enter for new line  •  LaTeX supported: $\int f(x)\,dx$
+        Shift + Enter for new line • LaTeX supported: $\int f(x)\,dx$
       </p>
     </div>
   );
