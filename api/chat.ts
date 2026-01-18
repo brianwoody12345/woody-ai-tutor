@@ -40,6 +40,21 @@ function extractProblemBlock(text: string, n: number): string {
   return text.slice(startIdx, endIdx).trim();
 }
 
+// Very light heuristic to decide when we should allow an IBP table.
+// We only enable if the user explicitly asks for IBP or the integrand strongly suggests it.
+function shouldAllowIbpTable(message: string): boolean {
+  const m = message.toLowerCase();
+  if (m.includes("integration by parts") || m.includes("ibp") || m.includes("tabular")) return true;
+
+  // Common IBP trigger patterns: x ln x, x e^x, x sin x, x cos x, polynomial * trig/exp
+  // This is intentionally conservative.
+  const hasPoly = /\bx\s*\^?\s*\d*\b/.test(m) || /\bx\b/.test(m);
+  const hasTrig = /\bsin\b|\bcos\b|\btan\b|\bsec\b|\bcsc\b|\bcot\b/.test(m);
+  const hasExp = /\be\^|\bexp\b/.test(m);
+  const hasLn = /\bln\b|\blog\b/.test(m);
+  return hasPoly && (hasTrig || hasExp || hasLn);
+}
+
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
@@ -67,15 +82,13 @@ Never overuse coaching language or interrupt algebra.
 
 ABSOLUTE OUTPUT RULES
 - All math in LaTeX: use $...$ inline and $$...$$ for display.
-- NEVER use tables (no Markdown tables, no ASCII tables, no columns, no pipes |).
 - Do NOT use unicode superscripts like x². Use LaTeX: $x^2$.
 - End every indefinite integral with + C.
 
 IBP RULES
-- Tabular reasoning only, but PRESENTATION must be narrative (no tables).
-- NEVER mention the IBP formula.
+- Tabular method ONLY (no IBP formula).
 - MUST begin by naming the IBP type explicitly (Type I / II / III).
-- Use: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
+- Required language: “over and down”, “straight across”, “same as the original integral”, “move to the left-hand side”.
 
 Trig Substitution
 - MUST state the matching form first: √(a²−x²), √(x²+a²), or √(x²−a²).
@@ -142,14 +155,14 @@ Structure first. Repetition builds mastery.
     }
 
     // ✅ Only require pdf-parse if we actually have PDFs.
-    // This prevents import-time failures from killing the function.
     const fileList = collectFiles(files);
-    const hasPdf = fileList.some((f) => f?.mimetype === "application/pdf" && f?.filepath);
+    const hasPdf = fileList.some(
+      (f) => f?.mimetype === "application/pdf" && f?.filepath
+    );
 
     let pdfText = "";
 
     if (hasPdf) {
-      // Load pdf-parse inside handler (runtime-safe for ESM projects)
       let pdfParse: ((data: Buffer) => Promise<{ text: string }>) | null = null;
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -190,14 +203,6 @@ Structure first. Repetition builds mastery.
       if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
     }
 
-    const hardGuardrails = `
-HARD OUTPUT CONSTRAINTS:
-- NO TABLES of any kind (no | pipes, no columns).
-- If IBP is used: begin by naming Type I/II/III. No IBP formula. Narrative only.
-- If trig substitution is used: explicitly name the matching radical form first.
-- LaTeX for all math. No unicode superscripts.
-`;
-
     const contextToSend =
       extractedProblem || (pdfText ? pdfText.slice(0, 80_000) : "");
 
@@ -205,8 +210,36 @@ HARD OUTPUT CONSTRAINTS:
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
       : "";
 
+    // ✅ TABLE MODE: default OFF (preserves your working behavior)
+    const allowIbpTable = shouldAllowIbpTable(message);
+
+    // When allowed, require the exact 3-column table format like your Custom GPT screenshot
+    const tableModeGuardrails = allowIbpTable
+      ? `
+IBP TABLE MODE (ONLY if you actually use IBP):
+- After you state the IBP type, include ONE clean Markdown table with EXACTLY 3 columns:
+  sign | u | dv
+- Use short entries in cells (e.g., $e^x$, $\\cos x\\,dx$).
+- Use + / − signs in the sign column.
+- Do NOT create any other tables anywhere in the solution.
+- After the table, explain “over and down” and “straight across” in sentences.
+`
+      : `
+HARD OUTPUT CONSTRAINTS:
+- Do NOT output any tables (no Markdown tables, no ASCII tables, no columns).
+`;
+
+    // Keep your other guardrails (safe, consistent)
+    const coreGuardrails = `
+CORE GUARDRAILS:
+- If IBP is used: begin by naming Type I/II/III. Never mention the IBP formula.
+- If trig substitution is used: explicitly name the matching radical form first.
+- LaTeX for all math. No unicode superscripts.
+`;
+
     const userContent =
-      `${hardGuardrails}\n\n` +
+      `${tableModeGuardrails}\n` +
+      `${coreGuardrails}\n\n` +
       `${routingInstruction}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
@@ -290,7 +323,6 @@ HARD OUTPUT CONSTRAINTS:
 
     res.end();
   } catch (err: any) {
-    // ✅ If we get here, the error will be visible in the response
     res.statusCode = 500;
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
