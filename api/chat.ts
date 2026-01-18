@@ -1,11 +1,9 @@
 // api/chat.ts
 export const runtime = "nodejs";
 
-// IMPORTANT: disable Next's bodyParser so we can read the raw body reliably.
+// IMPORTANT: disable Next's bodyParser so we can reliably read the raw body
 export const config = {
-  api: {
-    bodyParser: false,
-  },
+  api: { bodyParser: false },
 };
 
 function readRawBody(req: any): Promise<string> {
@@ -37,37 +35,26 @@ function tryParseUrlEncoded(raw: string): Record<string, string> | null {
   }
 }
 
-function extractMessageFromAnySource(opts: {
-  query?: any;
-  parsed?: any;
-  raw?: string;
-}): string {
-  const { query, parsed, raw } = opts;
+function extractMessage(body: any, raw: string, query: any): string {
+  // Querystring fallback: /api/chat?message=...
+  if (typeof query?.message === "string" && query.message.trim()) return query.message.trim();
+  if (typeof query?.content === "string" && query.content.trim()) return query.content.trim();
 
-  // 1) Querystring fallback (e.g., /api/chat?message=hi)
-  const qMsg =
-    (typeof query?.message === "string" && query.message) ||
-    (typeof query?.content === "string" && query.content);
-  if (qMsg) return qMsg;
+  // Common JSON shapes
+  if (typeof body?.message === "string" && body.message.trim()) return body.message.trim();
+  if (typeof body?.content === "string" && body.content.trim()) return body.content.trim();
 
-  // 2) Parsed JSON or parsed form body
-  const p = parsed ?? {};
-  const m1 = typeof p.message === "string" ? p.message : null;
-  if (m1) return m1;
+  // Chat-style array
+  if (Array.isArray(body?.messages) && body.messages.length) {
+    const joined = body.messages
+      .map((m: any) => (typeof m?.content === "string" ? m.content : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (joined) return joined;
+  }
 
-  const m2 = typeof p.content === "string" ? p.content : null;
-  if (m2) return m2;
-
-  const m3 =
-    Array.isArray(p.messages) && p.messages.length
-      ? p.messages
-          .map((x: any) => (typeof x?.content === "string" ? x.content : ""))
-          .filter(Boolean)
-          .join("\n")
-      : null;
-  if (m3) return m3;
-
-  // 3) Raw body as plain text (last resort)
+  // Last resort: raw body as plain text
   if (typeof raw === "string" && raw.trim()) return raw.trim();
 
   return "";
@@ -76,44 +63,41 @@ function extractMessageFromAnySource(opts: {
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
-      res.status(405).json({ error: "Method not allowed" });
-      return;
-    }
-
-    // Read raw body (works even if client forgot headers)
-    const raw = await readRawBody(req);
-
-    // Attempt parse in a robust order
-    const parsedJson = raw ? tryParseJson(raw) : null;
-    const parsedForm =
-      !parsedJson && raw ? tryParseUrlEncoded(raw) : null;
-
-    const parsed = parsedJson ?? parsedForm ?? {};
-
-    // Extract message from query, parsed, or raw
-    const message = extractMessageFromAnySource({
-      query: req.query,
-      parsed,
-      raw,
-    });
-
-    if (!message) {
-      res.status(400).json({
-        error: "Missing message",
-        debug: {
-          method: req.method,
-          url: req.url,
-          queryKeys: Object.keys(req.query ?? {}),
-          contentType: req.headers?.["content-type"] ?? null,
-          rawLength: raw?.length ?? 0,
-          parsedKeys: Object.keys(parsed ?? {}),
-        },
-      });
+      res.statusCode = 405;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Method Not Allowed");
       return;
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: "Missing OPENAI_API_KEY" });
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Missing OPENAI_API_KEY");
+      return;
+    }
+
+    // Read raw body, then parse as JSON or form data if possible
+    const raw = await readRawBody(req);
+    const parsedJson = raw ? tryParseJson(raw) : null;
+    const parsedForm = !parsedJson && raw ? tryParseUrlEncoded(raw) : null;
+    const body = parsedJson ?? parsedForm ?? {};
+
+    const message = extractMessage(body, raw, req.query);
+
+    if (!message) {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: "Missing message",
+          debug: {
+            contentType: req.headers?.["content-type"] ?? null,
+            rawLength: raw?.length ?? 0,
+            queryKeys: Object.keys(req.query ?? {}),
+            parsedKeys: Object.keys(body ?? {}),
+          },
+        })
+      );
       return;
     }
 
@@ -341,6 +325,13 @@ You are a private professor, not a calculator.
 Structure first. Repetition builds mastery.
 `;
 
+    // Stream response as plain text, so your UI shows it correctly (not JSON)
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Transfer-Encoding", "chunked");
+
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -349,6 +340,7 @@ Structure first. Repetition builds mastery.
       },
       body: JSON.stringify({
         model: "gpt-4o",
+        stream: true,
         temperature: 0,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
@@ -357,15 +349,56 @@ Structure first. Repetition builds mastery.
       }),
     });
 
-    const data = await upstream.json();
-    const content =
-      data?.choices?.[0]?.message?.content ?? "No response from model.";
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => "");
+      res.write(`Upstream error (${upstream.status}): ${text.slice(0, 1200)}`);
+      res.end();
+      return;
+    }
 
-    res.status(200).json({ content });
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        const line = part
+          .split("\n")
+          .map((s) => s.trim())
+          .find((s) => s.startsWith("data:"));
+        if (!line) continue;
+
+        const data = line.replace(/^data:\s*/, "");
+        if (data === "[DONE]") {
+          res.end();
+          return;
+        }
+
+        try {
+          const json = JSON.parse(data);
+          const delta = json?.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            res.write(delta);
+          }
+        } catch {
+          // ignore malformed chunks
+        }
+      }
+    }
+
+    res.end();
   } catch (err: any) {
-    res.status(500).json({
-      error: "Server error",
-      details: err?.message ?? String(err),
-    });
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end(`Server error: ${err?.message || "unknown"}\n${err?.stack || ""}`);
   }
 }
