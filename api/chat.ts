@@ -62,8 +62,7 @@ export default async function handler(req: any, res: any) {
     const MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER = 0;
     const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
 
-    // ✅ Your Custom GPT instructions (verbatim) as system prompt,
-    // plus ONLY a minimal formatting note so your app output matches the example.
+    // ✅ Your Custom GPT instructions (verbatim) + ONE targeted Type II correctness guardrail.
     const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor
 
 You are the Woody Calculus AI Clone.
@@ -289,19 +288,22 @@ Structure first. Repetition builds mastery.
 OUTPUT FORMAT (LIGHT):
 - Use $...$ for inline math and $$...$$ for displayed math.
 - You may use Markdown tables when helpful.
+- Do NOT invent extra rows in a Type II IBP table. Use exactly 3 rows.
 
-TYPE II IBP (LIGHT TEMPLATE TO MATCH THE CUSTOM GPT LOOK):
-If the integrand is exponential × trig, include a 3-row table exactly like:
+TYPE II CORRECTNESS GUARDRAIL (CRITICAL — NO MATH ERRORS ALLOWED):
+If the integrand is exponential × trig of the form:
+  I = \\int e^{ax}\\cos(bx)\\,dx   OR   I = \\int e^{ax}\\sin(bx)\\,dx
+then after two tabular steps the repeated-integral coefficient MUST be:
+  -(a^2/b^2)I
 
-| sign | differentiate | integrate |
-| ---- | ------------- | --------- |
-| +    | (e^{ax})      | (\\cos(bx)) or (\\sin(bx)) |
-| −    | (ae^{ax}) or (e^{ax}) | (first antiderivative) |
-| +    | (...)         | (second antiderivative) |
+So the Row 3 (straight across) line MUST be written exactly like:
+  Row 3 (straight across): $-\\frac{a^2}{b^2}\\int e^{ax}\\cos(bx)\\,dx$
+or
+  Row 3 (straight across): $-\\frac{a^2}{b^2}\\int e^{ax}\\sin(bx)\\,dx$
 
-Use exactly 3 rows for Type II.
-Use alternating signs: +, −, +.
-When reading Row 2 (over and down), explicitly simplify the sign if it is negative times negative.
+Also:
+- In Row 2 (over and down), if you have negative times negative, you must simplify it to a plus explicitly (example: $-(...)\\cdot(-...) = +...$).
+- The final answer must be correct and include + C.
 `;
 
     let fields: any = {};
