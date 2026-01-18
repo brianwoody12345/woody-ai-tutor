@@ -40,6 +40,11 @@ function extractProblemBlock(text: string, n: number): string {
   return text.slice(startIdx, endIdx).trim();
 }
 
+function isGreetingOnly(message: string): boolean {
+  const m = message.trim().toLowerCase();
+  return /^(hi|hello|hey|yo|good morning|good afternoon|good evening|what's up|whats up)$/i.test(m);
+}
+
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
@@ -53,11 +58,12 @@ export default async function handler(req: any, res: any) {
     const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024;
 
     // Cost control:
-    const MAX_OUTPUT_TOKENS = 1600;
+    const MAX_OUTPUT_TOKENS = 1700;
     const MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER = 0;
     const MAX_PDF_CHARS_IF_PROBLEM_NUMBER = 60_000;
 
-    // ✅ Your Custom GPT instructions as the actual system prompt (minimal extra glue only)
+    // ✅ Your Custom GPT instructions (verbatim) as system prompt,
+    // plus ONLY a minimal formatting note so your app output matches the example.
     const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor
 
 You are the Woody Calculus AI Clone.
@@ -107,6 +113,7 @@ Integration by Parts (IBP)
 Tabular method ONLY
 
 Formula ∫u dv = uv − ∫v du is forbidden
+
 
 Type I: Polynomial × trig/exponential
 → Polynomial in u, stop when derivative = 0
@@ -279,9 +286,22 @@ Required language:
 You are a private professor, not a calculator.
 Structure first. Repetition builds mastery.
 
-OUTPUT FORMAT (MINIMAL):
-- Use LaTeX for math: $...$ inline and $$...$$ for display.
-- Do not use Unicode superscripts like x²; write $x^2$.
+OUTPUT FORMAT (LIGHT):
+- Use $...$ for inline math and $$...$$ for displayed math.
+- You may use Markdown tables when helpful.
+
+TYPE II IBP (LIGHT TEMPLATE TO MATCH THE CUSTOM GPT LOOK):
+If the integrand is exponential × trig, include a 3-row table exactly like:
+
+| sign | differentiate | integrate |
+| ---- | ------------- | --------- |
+| +    | (e^{ax})      | (\\cos(bx)) or (\\sin(bx)) |
+| −    | (ae^{ax}) or (e^{ax}) | (first antiderivative) |
+| +    | (...)         | (second antiderivative) |
+
+Use exactly 3 rows for Type II.
+Use alternating signs: +, −, +.
+When reading Row 2 (over and down), explicitly simplify the sign if it is negative times negative.
 `;
 
     let fields: any = {};
@@ -376,9 +396,6 @@ OUTPUT FORMAT (MINIMAL):
       }
     }
 
-    // -------------------------
-    // If user asked for "problem ##", extract only that block.
-    // -------------------------
     const probMatch =
       message.match(/\bdo\s+problem\s+(\d+)\b/i) ||
       message.match(/\bproblem\s+(\d+)\b/i);
@@ -389,7 +406,6 @@ OUTPUT FORMAT (MINIMAL):
       if (Number.isFinite(n)) extractedProblem = extractProblemBlock(pdfText, n);
     }
 
-    // Minimal routing instruction only (no table micromanagement)
     const routingInstruction = probMatch
       ? `The student requested problem ${probMatch[1]}. If the homework text contains that problem, solve it directly without asking for clarification.`
       : hasPdf
@@ -403,8 +419,13 @@ OUTPUT FORMAT (MINIMAL):
       contextToSend = pdfText.slice(0, MAX_PDF_CHARS_IF_NO_PROBLEM_NUMBER);
     }
 
+    const greetingOverride = isGreetingOnly(message)
+      ? `The student message is only a greeting. Reply with exactly: "Welcome to Woody Calculus Clone AI."`
+      : "";
+
     const userContent =
-      `${routingInstruction}\n\n` +
+      `${routingInstruction}\n` +
+      `${greetingOverride}\n\n` +
       `Student message:\n${message}\n\n` +
       (contextToSend ? `Homework text (relevant):\n${contextToSend}\n` : "");
 
