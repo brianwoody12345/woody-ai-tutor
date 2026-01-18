@@ -47,6 +47,90 @@ function renderCodeCard(codeRaw: string): string {
   `;
 }
 
+function isTableSeparatorRow(line: string): boolean {
+  // matches: | ---- | --- | or ----|---|---- with optional spaces
+  const s = line.trim().replace(/\s/g, '');
+  return /^(\|?-{3,}\|)+-?\|?$/.test(s);
+}
+
+function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: number } | null {
+  // need at least header + separator + 1 row
+  if (lines.length < 3) return null;
+
+  const header = lines[0];
+  const sep = lines[1];
+  if (!header.includes('|') || !isTableSeparatorRow(sep)) return null;
+
+  const rows: string[] = [];
+  let i = 2;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.includes('|')) break;
+    if (line.trim() === '') break;
+    rows.push(line);
+    i++;
+  }
+  if (rows.length === 0) return null;
+
+  const splitRow = (row: string) =>
+    row
+      .split('|')
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+
+  const headers = splitRow(header);
+  const body = rows.map(splitRow);
+
+  const ths = headers
+    .map(
+      (h) => `<th style="
+        text-align:left;
+        padding:10px 12px;
+        font-size:12px;
+        font-weight:800;
+        letter-spacing:0.08em;
+        text-transform:uppercase;
+        color:hsl(var(--muted-foreground));
+        border-bottom:1px solid hsl(var(--border) / 0.6);
+      ">${escapeHtml(h)}</th>`
+    )
+    .join('');
+
+  const trs = body
+    .map((r) => {
+      const tds = r
+        .map(
+          (c) => `<td style="
+            padding:10px 12px;
+            font-size:14px;
+            color:hsl(var(--foreground));
+            border-bottom:1px solid hsl(var(--border) / 0.35);
+            vertical-align:top;
+          ">${escapeHtml(c)}</td>`
+        )
+        .join('');
+      return `<tr>${tds}</tr>`;
+    })
+    .join('');
+
+  const tableHtml = `
+    <div style="
+      margin: 12px 0;
+      border-radius: 14px;
+      border: 1px solid hsl(var(--border) / 0.7);
+      background: hsl(var(--surface-elevated));
+      overflow: hidden;
+    ">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>${ths}</tr></thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </div>
+  `;
+
+  return { html: tableHtml, consumed: 2 + rows.length };
+}
+
 function renderMathContent(content: string): string {
   let processed = content ?? '';
 
@@ -58,7 +142,29 @@ function renderMathContent(content: string): string {
     return `@@CODEBLOCK_${idx}@@`;
   });
 
-  // 2) KaTeX rendering (non-code only)
+  // 2) Convert markdown tables (outside code blocks)
+  // Do this BEFORE KaTeX and BEFORE newline-><br>
+  {
+    const lines = processed.split('\n');
+    const out: string[] = [];
+    for (let i = 0; i < lines.length; ) {
+      const remaining = lines.slice(i);
+      const parsed = parseMarkdownTableBlock(remaining);
+      if (parsed) {
+        out.push(`@@HTMLBLOCK_START@@${parsed.html}@@HTMLBLOCK_END@@`);
+        i += parsed.consumed;
+        continue;
+      }
+      out.push(lines[i]);
+      i++;
+    }
+    processed = out.join('\n');
+  }
+
+  // 3) Simple horizontal rules for lines that are just "---"
+  processed = processed.replace(/^\s*---\s*$/gm, `@@HTMLBLOCK_START@@<hr style="border:none;border-top:1px solid hsl(var(--border) / 0.6); margin:14px 0;" />@@HTMLBLOCK_END@@`);
+
+  // 4) KaTeX rendering (non-code only)
   processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
@@ -109,7 +215,10 @@ function renderMathContent(content: string): string {
   // Newlines -> <br>
   processed = processed.replace(/\n/g, '<br>');
 
-  // 3) Put code blocks back at the end
+  // Restore raw HTML blocks (tables/hr)
+  processed = processed.replace(/@@HTMLBLOCK_START@@([\s\S]*?)@@HTMLBLOCK_END@@/g, (_, html) => String(html));
+
+  // 5) Put code blocks back at the end
   processed = processed.replace(/@@CODEBLOCK_(\d+)@@/g, (_, nStr) => {
     const n = Number(nStr);
     const code = codeBlocks[n] ?? '';
