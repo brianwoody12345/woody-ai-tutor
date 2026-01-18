@@ -8,10 +8,21 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    const { message } = req.body ?? {};
+    const body = req.body ?? {};
+
+    // Accept multiple possible frontend payload formats
+    const message =
+      body.message ??
+      body.content ??
+      (Array.isArray(body.messages)
+        ? body.messages.map((m: any) => m.content).join("\n")
+        : null);
 
     if (!message || typeof message !== "string") {
-      res.status(400).json({ error: "Missing message" });
+      res.status(400).json({
+        error: "Missing message",
+        receivedKeys: Object.keys(body),
+      });
       return;
     }
 
