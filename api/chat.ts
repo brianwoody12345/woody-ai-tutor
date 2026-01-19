@@ -61,6 +61,10 @@ Type II: Exponential × trig
 Type III: ln(x) or inverse trig
 → Force IBP with dv = 1
 
+After completing an Integration by Parts problem using the tabular method, verify the final answer by comparing it to the known general formula for that IBP type.
+
+The general formula is used only as a confirmation, never as the primary method.
+
 ========================
 IBP TABLE FORMAT (CRITICAL - FOLLOW EXACTLY)
 ========================
@@ -269,7 +273,26 @@ OUTPUT FORMAT RULES (CRITICAL)
 - Do NOT use Unicode superscripts like x². Always use LaTeX: $x^2$
 - End every indefinite integral with + C
 - Tables must use markdown table format with | separators
+
+========================
+IMAGE/DOCUMENT ANALYSIS
+========================
+When the user uploads an image or document containing mathematical equations:
+1. First, carefully read and interpret ALL mathematical notation visible in the image
+2. Transcribe the problem in proper LaTeX format before solving
+3. If the image is unclear, ask for clarification
+4. Solve the problem following all the rules above
 `;
+
+// Type for OpenAI message content
+type MessageContent = 
+  | string 
+  | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }>;
+
+interface OpenAIMessage {
+  role: "system" | "user" | "assistant";
+  content: MessageContent;
+}
 
 export default async function handler(
   req: VercelRequest,
@@ -287,30 +310,30 @@ export default async function handler(
     return;
   }
 
-  // Parse request body - handle both JSON and FormData
+  // Parse request body
   let userMessage = "";
-  let conversationHistory: Array<{ role: string; content: string }> = [];
+  let conversationHistory: Array<{ role: string; content: string; files?: Array<{ name: string; type: string; data: string }> }> = [];
+  let files: Array<{ name: string; type: string; data: string }> = [];
 
-  // Check content type
   const contentType = req.headers["content-type"] || "";
 
   if (contentType.includes("application/json")) {
-    // JSON body
-    const { message, messages } = req.body ?? {};
+    const { message, messages, files: uploadedFiles } = req.body ?? {};
     
     if (typeof message === "string") {
       userMessage = message;
     } else if (Array.isArray(messages) && messages.length > 0) {
-      // Support full conversation history
       conversationHistory = messages.filter(
         (m: { role: string; content: string }) => 
           m.role === "user" || m.role === "assistant"
       );
       userMessage = messages[messages.length - 1]?.content || "";
     }
+    
+    if (Array.isArray(uploadedFiles)) {
+      files = uploadedFiles;
+    }
   } else if (contentType.includes("multipart/form-data")) {
-    // FormData - parse it manually from body
-    // For Vercel, the body should already be parsed
     const body = req.body;
     
     if (typeof body?.message === "string") {
@@ -319,7 +342,6 @@ export default async function handler(
       userMessage = String(body.message);
     }
     
-    // Handle conversation history if provided
     if (body?.history) {
       try {
         conversationHistory = JSON.parse(body.history);
@@ -327,8 +349,15 @@ export default async function handler(
         // Ignore parse errors
       }
     }
+    
+    if (body?.files) {
+      try {
+        files = JSON.parse(body.files);
+      } catch {
+        // Ignore parse errors
+      }
+    }
   } else {
-    // Try to parse as JSON anyway
     try {
       const { message, messages } = req.body ?? {};
       
@@ -347,23 +376,78 @@ export default async function handler(
     return;
   }
 
-  // Build messages array for OpenAI
-  const openaiMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+  // Build messages array for OpenAI with vision support
+  const openaiMessages: OpenAIMessage[] = [
     { role: "system", content: WOODY_SYSTEM_PROMPT }
   ];
 
-  // Add conversation history if available
+  // Add conversation history
   if (conversationHistory.length > 0) {
-    for (const msg of conversationHistory) {
+    for (const msg of conversationHistory.slice(0, -1)) { // Exclude last message, we'll add it with files
       if (msg.role === "user" || msg.role === "assistant") {
-        openaiMessages.push({
-          role: msg.role as "user" | "assistant",
-          content: msg.content
-        });
+        // Check if this message has files attached
+        if (msg.files && msg.files.length > 0 && msg.role === "user") {
+          const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
+            { type: "text", text: msg.content }
+          ];
+          
+          for (const file of msg.files) {
+            if (file.type.startsWith("image/")) {
+              contentParts.push({
+                type: "image_url",
+                image_url: {
+                  url: file.data,
+                  detail: "high"
+                }
+              });
+            }
+          }
+          
+          openaiMessages.push({
+            role: "user",
+            content: contentParts
+          });
+        } else {
+          openaiMessages.push({
+            role: msg.role as "user" | "assistant",
+            content: msg.content
+          });
+        }
       }
     }
+  }
+
+  // Add the current user message with any attached files (vision support)
+  if (files.length > 0) {
+    const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
+      { type: "text", text: userMessage }
+    ];
+    
+    for (const file of files) {
+      // Only add images for vision (GPT-4o can see images)
+      if (file.type.startsWith("image/")) {
+        contentParts.push({
+          type: "image_url",
+          image_url: {
+            url: file.data, // base64 data URL
+            detail: "high" // Use high detail for math equations
+          }
+        });
+      } else if (file.type === "application/pdf") {
+        // For PDFs, add a note that we received a PDF
+        // GPT-4o Vision doesn't directly read PDFs, but we can note it
+        contentParts[0] = {
+          type: "text",
+          text: `[User uploaded a PDF document: ${file.name}]\n\n${userMessage}`
+        };
+      }
+    }
+    
+    openaiMessages.push({
+      role: "user",
+      content: contentParts
+    });
   } else {
-    // Just add the current user message
     openaiMessages.push({ role: "user", content: userMessage });
   }
 
@@ -377,9 +461,10 @@ export default async function handler(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gpt-4o-2024-08-06",
+          model: "gpt-4o",
           temperature: 0,
           stream: true,
+          max_tokens: 4096,
           messages: openaiMessages,
         }),
       }

@@ -63,8 +63,9 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
     onSend(trimmedMessage, files);
 
-    // ✅ Clear only the message. Keep files attached until the student removes them.
+    // ✅ Clear message AND files after sending
     setMessage('');
+    setFiles([]);
 
     textareaRef.current?.focus();
   }, [message, files, onSend, isLoading]);
