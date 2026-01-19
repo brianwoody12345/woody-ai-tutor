@@ -3,6 +3,7 @@ import { Sidebar } from '@/components/chat/Sidebar';
 import { TopBar } from '@/components/chat/TopBar';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { ChatInput } from '@/components/chat/ChatInput';
+import { API_BASE_URL } from '@/constants/apiBaseUrl';
 import type { ChatMessage, TopicId, UploadedFile } from '@/types/chat';
 
 export default function Index() {
@@ -95,8 +96,13 @@ export default function Index() {
           content: msg.content,
         }));
 
+        // IMPORTANT:
+        // - In dev, Vite proxies /api -> VERCEL_BACKEND.
+        // - In Lovable Preview/Published, the proxy is not used; we must call the backend directly.
+        const chatUrl = `${API_BASE_URL}/api/chat`;
+
         // Send as JSON with full conversation history and current files
-        const response = await fetch('/api/chat', {
+        const response = await fetch(chatUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -111,10 +117,14 @@ export default function Index() {
           }),
           signal: controller.signal,
         });
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          throw new Error('Chat backend did not respond (got HTML). Please try again in a moment.');
+        }
 
         if (!response.ok) {
           const errText = await response.text().catch(() => '');
-          throw new Error(`API /api/chat failed (${response.status}). ${errText.slice(0, 800)}`);
+          throw new Error(`API chat failed (${response.status}). ${errText.slice(0, 800)}`);
         }
 
         const reader = response.body?.getReader();
