@@ -1,3 +1,4 @@
+// @ts-ignore - types provided by Vercel at runtime
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import * as pdf2img from "pdf-img-convert";
 
@@ -371,21 +372,33 @@ export default async function handler(
 
   const contentType = req.headers["content-type"] || "";
 
+  console.log("[chat] Content-Type:", contentType);
+
   if (contentType.includes("application/json")) {
     const { message, messages, files: uploadedFiles } = req.body ?? {};
     
-    if (typeof message === "string") {
+    console.log("[chat] Received - message:", typeof message, "messages:", Array.isArray(messages) ? messages.length : 0, "files:", Array.isArray(uploadedFiles) ? uploadedFiles.length : 0);
+    
+    // Use 'message' field as the user message (frontend sends this)
+    if (typeof message === "string" && message.trim()) {
       userMessage = message;
-    } else if (Array.isArray(messages) && messages.length > 0) {
+    }
+    
+    // Store conversation history for context
+    if (Array.isArray(messages) && messages.length > 0) {
       conversationHistory = messages.filter(
         (m: { role: string; content: string }) => 
           m.role === "user" || m.role === "assistant"
       );
-      userMessage = messages[messages.length - 1]?.content || "";
+      // If no explicit message field, use the last message content
+      if (!userMessage) {
+        userMessage = messages[messages.length - 1]?.content || "";
+      }
     }
     
     if (Array.isArray(uploadedFiles)) {
       files = uploadedFiles;
+      console.log("[chat] Files received:", files.map(f => ({ name: f.name, type: f.type, dataLen: f.data?.length || 0 })));
     }
   } else {
     try {
@@ -400,6 +413,8 @@ export default async function handler(
       // Ignore
     }
   }
+
+  console.log("[chat] Final userMessage:", userMessage.slice(0, 100), "| files.length:", files.length);
 
   if (!userMessage && files.length === 0) {
     res.status(400).send("Missing message");
@@ -428,10 +443,15 @@ export default async function handler(
   const imageContents: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
 
   if (files.length > 0) {
+    console.log("[chat] Processing", files.length, "files...");
     for (const file of files) {
+      console.log("[chat] File:", file.name, "type:", file.type, "dataLen:", file.data?.length || 0);
+      
       if (file.type === "application/pdf") {
         // Convert PDF pages to images for vision (much better for math)
+        console.log("[chat] Converting PDF to images...");
         const pdfImages = await convertPdfToImages(file.data);
+        console.log("[chat] PDF converted to", pdfImages.length, "images");
         if (pdfImages.length > 0) {
           // Add each PDF page as an image for vision
           for (const pageImage of pdfImages) {
@@ -446,6 +466,7 @@ export default async function handler(
         }
       } else if (file.type.startsWith("image/")) {
         // Add images for vision
+        console.log("[chat] Adding image directly");
         imageContents.push({
           type: "image_url",
           image_url: {
@@ -453,8 +474,11 @@ export default async function handler(
             detail: "high"
           }
         });
+      } else {
+        console.log("[chat] Unknown file type, skipping:", file.type);
       }
     }
+    console.log("[chat] Total imageContents:", imageContents.length);
   }
 
   // Build the final user message
