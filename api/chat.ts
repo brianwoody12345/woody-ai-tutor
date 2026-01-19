@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import pdfParse from "pdf-parse";
 
 // The exact system prompt matching the custom GPT with EXPLICIT table formatting
 const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
@@ -294,6 +295,20 @@ interface OpenAIMessage {
   content: MessageContent;
 }
 
+// Helper function to extract text from PDF base64 data
+async function extractPdfText(base64Data: string): Promise<string> {
+  try {
+    // Remove the data URL prefix if present
+    const base64Content = base64Data.replace(/^data:application\/pdf;base64,/, '');
+    const buffer = Buffer.from(base64Content, 'base64');
+    const data = await pdfParse(buffer);
+    return data.text || '';
+  } catch (error) {
+    console.error('PDF parsing error:', error);
+    return '[Unable to extract PDF text]';
+  }
+}
+
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -312,7 +327,7 @@ export default async function handler(
 
   // Parse request body
   let userMessage = "";
-  let conversationHistory: Array<{ role: string; content: string; files?: Array<{ name: string; type: string; data: string }> }> = [];
+  let conversationHistory: Array<{ role: string; content: string }> = [];
   let files: Array<{ name: string; type: string; data: string }> = [];
 
   const contentType = req.headers["content-type"] || "";
@@ -333,30 +348,6 @@ export default async function handler(
     if (Array.isArray(uploadedFiles)) {
       files = uploadedFiles;
     }
-  } else if (contentType.includes("multipart/form-data")) {
-    const body = req.body;
-    
-    if (typeof body?.message === "string") {
-      userMessage = body.message;
-    } else if (body?.message) {
-      userMessage = String(body.message);
-    }
-    
-    if (body?.history) {
-      try {
-        conversationHistory = JSON.parse(body.history);
-      } catch {
-        // Ignore parse errors
-      }
-    }
-    
-    if (body?.files) {
-      try {
-        files = JSON.parse(body.files);
-      } catch {
-        // Ignore parse errors
-      }
-    }
   } else {
     try {
       const { message, messages } = req.body ?? {};
@@ -371,7 +362,7 @@ export default async function handler(
     }
   }
 
-  if (!userMessage) {
+  if (!userMessage && files.length === 0) {
     res.status(400).send("Missing message");
     return;
   }
@@ -381,74 +372,70 @@ export default async function handler(
     { role: "system", content: WOODY_SYSTEM_PROMPT }
   ];
 
-  // Add conversation history
-  if (conversationHistory.length > 0) {
-    for (const msg of conversationHistory.slice(0, -1)) { // Exclude last message, we'll add it with files
+  // Add conversation history (excluding the last message which we'll add with files)
+  if (conversationHistory.length > 1) {
+    for (const msg of conversationHistory.slice(0, -1)) {
       if (msg.role === "user" || msg.role === "assistant") {
-        // Check if this message has files attached
-        if (msg.files && msg.files.length > 0 && msg.role === "user") {
-          const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
-            { type: "text", text: msg.content }
-          ];
-          
-          for (const file of msg.files) {
-            if (file.type.startsWith("image/")) {
-              contentParts.push({
-                type: "image_url",
-                image_url: {
-                  url: file.data,
-                  detail: "high"
-                }
-              });
-            }
-          }
-          
-          openaiMessages.push({
-            role: "user",
-            content: contentParts
-          });
-        } else {
-          openaiMessages.push({
-            role: msg.role as "user" | "assistant",
-            content: msg.content
-          });
-        }
+        openaiMessages.push({
+          role: msg.role as "user" | "assistant",
+          content: msg.content
+        });
       }
     }
   }
 
-  // Add the current user message with any attached files (vision support)
+  // Process files and build the current user message with files
+  let textContent = userMessage;
+  const imageContents: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
+
   if (files.length > 0) {
-    const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
-      { type: "text", text: userMessage }
-    ];
+    const extractedTexts: string[] = [];
     
     for (const file of files) {
-      // Only add images for vision (GPT-4o can see images)
-      if (file.type.startsWith("image/")) {
-        contentParts.push({
+      if (file.type === "application/pdf") {
+        // Extract text from PDF
+        const pdfText = await extractPdfText(file.data);
+        if (pdfText && pdfText !== '[Unable to extract PDF text]') {
+          extractedTexts.push(`\n\n--- Extracted from PDF "${file.name}" ---\n${pdfText}\n--- End of PDF ---\n`);
+        } else {
+          extractedTexts.push(`\n\n[PDF "${file.name}" could not be read. Please try uploading an image of the problem instead.]\n`);
+        }
+      } else if (file.type.startsWith("image/")) {
+        // Add images for vision
+        imageContents.push({
           type: "image_url",
           image_url: {
-            url: file.data, // base64 data URL
-            detail: "high" // Use high detail for math equations
+            url: file.data,
+            detail: "high"
           }
         });
-      } else if (file.type === "application/pdf") {
-        // For PDFs, add a note that we received a PDF
-        // GPT-4o Vision doesn't directly read PDFs, but we can note it
-        contentParts[0] = {
-          type: "text",
-          text: `[User uploaded a PDF document: ${file.name}]\n\n${userMessage}`
-        };
       }
     }
+    
+    // Append extracted PDF text to the user message
+    if (extractedTexts.length > 0) {
+      textContent = userMessage + extractedTexts.join('');
+    }
+  }
+
+  // Build the final user message
+  if (imageContents.length > 0) {
+    // Message with images (vision mode)
+    const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: string } }> = [
+      { type: "text", text: textContent || "Please analyze this image and solve any math problems shown." }
+    ];
+    contentParts.push(...imageContents);
     
     openaiMessages.push({
       role: "user",
       content: contentParts
     });
   } else {
-    openaiMessages.push({ role: "user", content: userMessage });
+    // Text-only message
+    openaiMessages.push({ 
+      role: "user", 
+      content: textContent || "Please help me with calculus."
+    });
   }
 
   try {
