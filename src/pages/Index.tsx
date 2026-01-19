@@ -11,6 +11,10 @@ export default function Index() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeTopic, setActiveTopic] = useState<TopicId>('techniques-integration');
 
+  // Files should persist for the entire browser session (until tab/window is closed)
+  // so follow-up questions can reference the same document(s).
+  const attachedFilesRef = useRef<UploadedFile[]>([]);
+
   // "Typing indicator" (bubble that says Professor Woody is typing)
   const [isTyping, setIsTyping] = useState(false);
 
@@ -37,6 +41,8 @@ export default function Index() {
       setIsTyping(false);
     }
 
+    // Clear both messages and session attachments
+    attachedFilesRef.current = [];
     setMessages([]);
   }, []);
 
@@ -88,7 +94,16 @@ export default function Index() {
   const handleSendMessage = useCallback(
     async (content: string, files: UploadedFile[]) => {
       const trimmed = (content || '').trim();
-      if (!trimmed && files.length === 0) return;
+
+      // Persist attachments across the whole session:
+      // - If user sends new files, they replace the current session attachments.
+      // - If user sends no files, we reuse the session attachments.
+      if (files.length > 0) {
+        attachedFilesRef.current = files;
+      }
+      const effectiveFiles = files.length > 0 ? files : attachedFilesRef.current;
+
+      if (!trimmed && effectiveFiles.length === 0) return;
 
       // ✅ Prevent double-submit / overlapping API calls (big cost saver)
       if (inFlightRef.current || isBusy) return;
@@ -100,8 +115,8 @@ export default function Index() {
       const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'user',
-        content: trimmed || 'Please analyze this file.',
-        files: files.length > 0 ? files : undefined,
+        content: trimmed || (effectiveFiles.length > 0 ? 'Please analyze this file.' : ''),
+        files: effectiveFiles.length > 0 ? effectiveFiles : undefined,
         timestamp: new Date(),
       };
 
@@ -119,7 +134,7 @@ export default function Index() {
       try {
         // Convert files to base64 for API
         const filesData = await Promise.all(
-          files.map(async (f) => ({
+          effectiveFiles.map(async (f) => ({
             name: f.name,
             type: f.file.type,
             data: await fileToBase64(f.file),
@@ -144,7 +159,7 @@ export default function Index() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            message: trimmed || 'Please analyze this file.',
+            message: trimmed || (effectiveFiles.length > 0 ? 'Please analyze this file.' : ''),
             messages: conversationHistory,
             files: filesData,
             topic: activeTopic,
