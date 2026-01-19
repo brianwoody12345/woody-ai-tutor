@@ -2,6 +2,17 @@
 // Visit /api/health to verify the serverless layer is deployed and has env vars.
 
 export default function handler(req: any, res: any) {
+  // CORS (required for Lovable Preview -> Vercel cross-origin fetch)
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
   const hasKey = Boolean(process.env.OPENAI_API_KEY && String(process.env.OPENAI_API_KEY).trim());
   res.statusCode = 200;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
