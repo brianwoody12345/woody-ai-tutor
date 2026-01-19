@@ -170,7 +170,10 @@ export default function Index() {
         });
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('text/html')) {
-          throw new Error('Chat backend did not respond (got HTML). Please try again in a moment.');
+          const html = await response.text().catch(() => '');
+          throw new Error(
+            `Chat backend returned HTML (status ${response.status}). This usually means /api/chat is being rewritten to index.html. Snippet: ${html.slice(0, 180)}`
+          );
         }
 
         if (!response.ok) {
