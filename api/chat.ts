@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import pdfParse from "pdf-parse";
+import { pdf } from "pdf-to-img";
 
 // The exact system prompt matching the custom GPT with EXPLICIT table formatting
 const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
@@ -295,17 +295,25 @@ interface OpenAIMessage {
   content: MessageContent;
 }
 
-// Helper function to extract text from PDF base64 data
-async function extractPdfText(base64Data: string): Promise<string> {
+// Helper function to convert PDF pages to base64 images for vision
+async function convertPdfToImages(base64Data: string): Promise<string[]> {
   try {
     // Remove the data URL prefix if present
     const base64Content = base64Data.replace(/^data:application\/pdf;base64,/, '');
     const buffer = Buffer.from(base64Content, 'base64');
-    const data = await pdfParse(buffer);
-    return data.text || '';
+    
+    const images: string[] = [];
+    const document = await pdf(buffer, { scale: 2.0 }); // Higher scale for better math readability
+    
+    for await (const page of document) {
+      const base64Image = page.toString('base64');
+      images.push(`data:image/png;base64,${base64Image}`);
+    }
+    
+    return images;
   } catch (error) {
-    console.error('PDF parsing error:', error);
-    return '[Unable to extract PDF text]';
+    console.error('PDF to image conversion error:', error);
+    return [];
   }
 }
 
@@ -389,16 +397,21 @@ export default async function handler(
   const imageContents: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
 
   if (files.length > 0) {
-    const extractedTexts: string[] = [];
-    
     for (const file of files) {
       if (file.type === "application/pdf") {
-        // Extract text from PDF
-        const pdfText = await extractPdfText(file.data);
-        if (pdfText && pdfText !== '[Unable to extract PDF text]') {
-          extractedTexts.push(`\n\n--- Extracted from PDF "${file.name}" ---\n${pdfText}\n--- End of PDF ---\n`);
-        } else {
-          extractedTexts.push(`\n\n[PDF "${file.name}" could not be read. Please try uploading an image of the problem instead.]\n`);
+        // Convert PDF pages to images for vision (much better for math)
+        const pdfImages = await convertPdfToImages(file.data);
+        if (pdfImages.length > 0) {
+          // Add each PDF page as an image for vision
+          for (const pageImage of pdfImages) {
+            imageContents.push({
+              type: "image_url",
+              image_url: {
+                url: pageImage,
+                detail: "high"
+              }
+            });
+          }
         }
       } else if (file.type.startsWith("image/")) {
         // Add images for vision
@@ -410,11 +423,6 @@ export default async function handler(
           }
         });
       }
-    }
-    
-    // Append extracted PDF text to the user message
-    if (extractedTexts.length > 0) {
-      textContent = userMessage + extractedTexts.join('');
     }
   }
 
