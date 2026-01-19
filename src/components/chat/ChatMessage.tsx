@@ -63,6 +63,8 @@ function renderCellWithLatex(cell: string): string {
       return katex.renderToString(String(math).trim(), {
         displayMode: true,
         throwOnError: false,
+        strict: false,
+        trust: true,
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -75,6 +77,8 @@ function renderCellWithLatex(cell: string): string {
       return katex.renderToString(String(math).trim(), {
         displayMode: false,
         throwOnError: false,
+        strict: false,
+        trust: true,
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -87,6 +91,8 @@ function renderCellWithLatex(cell: string): string {
       return katex.renderToString(String(math).trim(), {
         displayMode: false,
         throwOnError: false,
+        strict: false,
+        trust: true,
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -99,6 +105,8 @@ function renderCellWithLatex(cell: string): string {
       return katex.renderToString(String(math).trim(), {
         displayMode: true,
         throwOnError: false,
+        strict: false,
+        trust: true,
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -233,6 +241,8 @@ function renderMathContent(content: string): string {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
         displayMode: true,
         throwOnError: false,
+        strict: false,
+        trust: true,
       })}</div>`;
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -244,6 +254,8 @@ function renderMathContent(content: string): string {
       return `<div class="katex-display">${katex.renderToString(String(math).trim(), {
         displayMode: true,
         throwOnError: false,
+        strict: false,
+        trust: true,
       })}</div>`;
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -255,6 +267,8 @@ function renderMathContent(content: string): string {
       return katex.renderToString(String(math).trim(), {
         displayMode: false,
         throwOnError: false,
+        strict: false,
+        trust: true,
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -266,6 +280,8 @@ function renderMathContent(content: string): string {
       return katex.renderToString(String(math).trim(), {
         displayMode: false,
         throwOnError: false,
+        strict: false,
+        trust: true,
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
