@@ -63,7 +63,7 @@ export default function Index() {
       const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'user',
-        content: trimmed || 'Please analyze this image.',
+        content: trimmed || 'Please analyze this file.',
         files: files.length > 0 ? files : undefined,
         timestamp: new Date(),
       };
@@ -89,35 +89,20 @@ export default function Index() {
           }))
         );
 
-        // Build conversation history for context (including file data)
-        const conversationHistory = await Promise.all(
-          updatedMessages.map(async (msg) => {
-            const msgFiles = msg.files
-              ? await Promise.all(
-                  msg.files.map(async (f) => ({
-                    name: f.name,
-                    type: f.file.type,
-                    data: await fileToBase64(f.file),
-                  }))
-                )
-              : undefined;
+        // Build conversation history for context (without file data for older messages)
+        const conversationHistory = updatedMessages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
 
-            return {
-              role: msg.role,
-              content: msg.content,
-              files: msgFiles,
-            };
-          })
-        );
-
-        // Send as JSON with full conversation history and files
+        // Send as JSON with full conversation history and current files
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            message: trimmed || 'Please analyze this image.',
+            message: trimmed || 'Please analyze this file.',
             messages: conversationHistory,
             files: filesData,
             topic: activeTopic,
