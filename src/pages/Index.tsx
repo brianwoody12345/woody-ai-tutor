@@ -4,6 +4,7 @@ import { TopBar } from '@/components/chat/TopBar';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { API_BASE_URL } from '@/constants/apiBaseUrl';
+import { toast } from '@/components/ui/sonner';
 import type { ChatMessage, TopicId, UploadedFile } from '@/types/chat';
 
 export default function Index() {
@@ -37,6 +38,41 @@ export default function Index() {
     }
 
     setMessages([]);
+  }, []);
+
+  const handleTestConnection = useCallback(async () => {
+    const healthUrl = `${API_BASE_URL}/api/health`;
+
+    try {
+      const res = await fetch(healthUrl, {
+        method: 'GET',
+        // keep it simple; if CORS is broken, this will throw
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      const allowOrigin = res.headers.get('access-control-allow-origin');
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Health failed (${res.status}). ${text.slice(0, 300)}`);
+      }
+
+      if (!contentType.includes('application/json')) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Health returned non-JSON (${contentType || 'unknown'}): ${text.slice(0, 200)}`);
+      }
+
+      const data = (await res.json()) as { ok?: boolean; hasOpenAIKey?: boolean; model?: string };
+
+      toast.success('Backend reachable', {
+        description: `ok=${Boolean(data.ok)} • key=${data.hasOpenAIKey ? 'yes' : 'no'} • model=${data.model || 'unknown'}${allowOrigin ? ` • ACAO=${allowOrigin}` : ''}`,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error('Backend NOT reachable from Preview', {
+        description: `${msg} (likely CORS or deploy not updated)`,
+      });
+    }
   }, []);
 
   // Helper to convert file to base64
@@ -202,6 +238,7 @@ export default function Index() {
       <main className="flex-1 flex flex-col min-h-screen">
         <TopBar
           onClearChat={handleClearChat}
+          onTestConnection={handleTestConnection}
           showSetupFirst={showSetupFirst}
           onShowSetupFirstChange={setShowSetupFirst}
           woodyCoaching={woodyCoaching}
@@ -216,3 +253,4 @@ export default function Index() {
     </div>
   );
 }
+

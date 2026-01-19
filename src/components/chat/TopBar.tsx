@@ -1,10 +1,11 @@
-import { Trash2, Lightbulb, MessageSquare } from 'lucide-react';
+import { Trash2, Lightbulb, MessageSquare, PlugZap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 
 interface TopBarProps {
   onClearChat: () => void;
+  onTestConnection: () => void;
   showSetupFirst: boolean;
   onShowSetupFirstChange: (value: boolean) => void;
   woodyCoaching: boolean;
@@ -13,6 +14,7 @@ interface TopBarProps {
 
 export function TopBar({
   onClearChat,
+  onTestConnection,
   showSetupFirst,
   onShowSetupFirstChange,
   woodyCoaching,
@@ -21,7 +23,7 @@ export function TopBar({
   return (
     <header className="h-12 px-5 border-b border-border bg-card/80 backdrop-blur-md flex items-center justify-between gap-4">
       {/* Left section */}
-      <div className="flex items-center">
+      <div className="flex items-center gap-2">
         <Button
           variant="ghost"
           size="sm"
@@ -30,6 +32,16 @@ export function TopBar({
         >
           <Trash2 className="w-3.5 h-3.5 mr-1.5" />
           Clear Chat
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onTestConnection}
+          className="h-8 px-3 text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-md"
+        >
+          <PlugZap className="w-3.5 h-3.5 mr-1.5" />
+          Test Connection
         </Button>
       </div>
 
@@ -42,8 +54,8 @@ export function TopBar({
             onCheckedChange={onShowSetupFirstChange}
             className="data-[state=checked]:bg-primary h-4 w-7"
           />
-          <Label 
-            htmlFor="setup-first" 
+          <Label
+            htmlFor="setup-first"
             className="text-[11px] font-medium text-muted-foreground cursor-pointer flex items-center gap-1.5 tracking-wide"
           >
             <Lightbulb className="w-3 h-3" />
@@ -60,8 +72,8 @@ export function TopBar({
             onCheckedChange={onWoodyCoachingChange}
             className="data-[state=checked]:bg-primary h-4 w-7"
           />
-          <Label 
-            htmlFor="woody-coaching" 
+          <Label
+            htmlFor="woody-coaching"
             className="text-[11px] font-medium text-muted-foreground cursor-pointer flex items-center gap-1.5 tracking-wide"
           >
             <MessageSquare className="w-3 h-3" />
@@ -72,3 +84,4 @@ export function TopBar({
     </header>
   );
 }
+
