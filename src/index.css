@@ -182,6 +182,28 @@
   color: inherit;
 }
 
+/* Global KaTeX hardening:
+   Tailwind's preflight sets border-width: 0 on many elements.
+   KaTeX draws radicals/overlines/fraction bars using borders, so force a visible width + color. */
+.katex,
+.katex * {
+  border-color: currentColor;
+}
+
+.katex svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.katex .mfrac .frac-line,
+.katex .overline .overline-line,
+.katex .underline .underline-line,
+.katex .sqrt .rule,
+.katex .sqrt .sqrt-line,
+.katex .hline,
+.katex .hdashline {
+  border-bottom-width: 1px;
+}
 
 /* Message bubble KaTeX — more refined */
 .message-content .katex-display {
