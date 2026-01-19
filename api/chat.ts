@@ -2,16 +2,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import * as pdf2img from "pdf-img-convert";
 
-// Increase body size limit because PDFs are sent as base64 in JSON.
-// Without this, Vercel will reject or truncate the request, making it look like “no document uploaded”.
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "20mb",
-    },
-  },
-};
-
 // The exact system prompt matching the custom GPT with EXPLICIT table formatting
 const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
 
@@ -338,13 +328,6 @@ async function convertPdfToImages(base64Data: string): Promise<string[]> {
   }
 }
 
-// CORS headers for cross-origin requests (Lovable preview, etc.)
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -600,9 +583,9 @@ export default async function handler(
 
     // Process any remaining buffer
     if (buffer.trim() && buffer.trim() !== "data: [DONE]") {
-      if (buffer.trim().startsWith("data: ")) {
+      if (buffer.startsWith("data: ")) {
         try {
-          const parsed = JSON.parse(buffer.trim().slice(6));
+          const parsed = JSON.parse(buffer.slice(6));
           const content = parsed.choices?.[0]?.delta?.content;
           if (content) {
             res.write(content);
@@ -615,7 +598,7 @@ export default async function handler(
 
     res.end();
   } catch (error) {
-    console.error("Stream error:", error);
-    res.status(500).send(`Stream error: ${error instanceof Error ? error.message : "Unknown error"}`);
+    console.error("Error in chat handler:", error);
+    res.status(500).send(`Server error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
 }
