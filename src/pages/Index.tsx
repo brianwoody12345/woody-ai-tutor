@@ -38,10 +38,20 @@ export default function Index() {
     setMessages([]);
   }, []);
 
+  // Helper to convert file to base64
+  const fileToBase64 = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
   const handleSendMessage = useCallback(
     async (content: string, files: UploadedFile[]) => {
       const trimmed = (content || '').trim();
-      if (!trimmed) return;
+      if (!trimmed && files.length === 0) return;
 
       // ✅ Prevent double-submit / overlapping API calls (big cost saver)
       if (inFlightRef.current || isBusy) return;
@@ -53,7 +63,7 @@ export default function Index() {
       const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'user',
-        content: trimmed,
+        content: trimmed || 'Please analyze this image.',
         files: files.length > 0 ? files : undefined,
         timestamp: new Date(),
       };
@@ -70,21 +80,46 @@ export default function Index() {
       abortRef.current = controller;
 
       try {
-        // Build conversation history for context
-        const conversationHistory = updatedMessages.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        }));
+        // Convert files to base64 for API
+        const filesData = await Promise.all(
+          files.map(async (f) => ({
+            name: f.name,
+            type: f.file.type,
+            data: await fileToBase64(f.file),
+          }))
+        );
 
-        // Send as JSON with full conversation history
+        // Build conversation history for context (including file data)
+        const conversationHistory = await Promise.all(
+          updatedMessages.map(async (msg) => {
+            const msgFiles = msg.files
+              ? await Promise.all(
+                  msg.files.map(async (f) => ({
+                    name: f.name,
+                    type: f.file.type,
+                    data: await fileToBase64(f.file),
+                  }))
+                )
+              : undefined;
+
+            return {
+              role: msg.role,
+              content: msg.content,
+              files: msgFiles,
+            };
+          })
+        );
+
+        // Send as JSON with full conversation history and files
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            message: trimmed,
+            message: trimmed || 'Please analyze this image.',
             messages: conversationHistory,
+            files: filesData,
             topic: activeTopic,
             showSetupFirst,
             woodyCoaching,
@@ -162,7 +197,7 @@ export default function Index() {
         setIsBusy(false);
       }
     },
-    [messages, activeTopic, showSetupFirst, woodyCoaching, isBusy]
+    [messages, activeTopic, showSetupFirst, woodyCoaching, isBusy, fileToBase64]
   );
 
   return (
