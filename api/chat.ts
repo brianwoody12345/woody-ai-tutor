@@ -1,6 +1,6 @@
 // @ts-ignore - types provided by Vercel at runtime
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import * as pdf2img from "pdf-img-convert";
+// Note: PDF-to-image conversion is now done CLIENT-SIDE to avoid serverless native dependency issues
 
 // The exact system prompt matching the custom GPT with EXPLICIT table formatting
 const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
@@ -296,37 +296,8 @@ interface OpenAIMessage {
   content: MessageContent;
 }
 
-// Helper function to convert PDF pages to base64 images for vision
-// Uses pdf-img-convert which is pure JavaScript and works in serverless environments
-async function convertPdfToImages(base64Data: string): Promise<string[]> {
-  try {
-    // Remove the data URL prefix if present
-    const base64Content = base64Data.replace(/^data:application\/pdf;base64,/, '');
-    const buffer = Buffer.from(base64Content, 'base64');
-    
-    // Convert PDF to images using pdf-img-convert (pure JS, serverless compatible)
-    // Scale 2.0 for high resolution math readability
-    const pagesAsImages = await pdf2img.convert(buffer, {
-      scale: 2.0,
-      base64: true, // Return base64 strings directly
-    });
-    
-    // Map to data URLs for OpenAI vision
-    const images: string[] = pagesAsImages.map((pageData: string | Uint8Array) => {
-      if (typeof pageData === 'string') {
-        return `data:image/png;base64,${pageData}`;
-      }
-      // If Uint8Array, convert to base64
-      const base64 = Buffer.from(pageData).toString('base64');
-      return `data:image/png;base64,${base64}`;
-    });
-    
-    return images;
-  } catch (error) {
-    console.error('PDF to image conversion error:', error);
-    return [];
-  }
-}
+// Note: PDF conversion is handled client-side now (see src/lib/pdfToImages.ts)
+// The backend only receives pre-converted images
 
 export default async function handler(
   req: VercelRequest,
@@ -440,26 +411,9 @@ export default async function handler(
     for (const file of files) {
       console.log("[chat] File:", file.name, "type:", file.type, "dataLen:", file.data?.length || 0);
       
-      if (file.type === "application/pdf") {
-        // Convert PDF pages to images for vision (much better for math)
-        console.log("[chat] Converting PDF to images...");
-        const pdfImages = await convertPdfToImages(file.data);
-        console.log("[chat] PDF converted to", pdfImages.length, "images");
-        if (pdfImages.length > 0) {
-          // Add each PDF page as an image for vision
-          for (const pageImage of pdfImages) {
-            imageContents.push({
-              type: "image_url",
-              image_url: {
-                url: pageImage,
-                detail: "high"
-              }
-            });
-          }
-        }
-      } else if (file.type.startsWith("image/")) {
-        // Add images for vision
-        console.log("[chat] Adding image directly");
+      // PDFs are now converted to images client-side, so we only expect images here
+      if (file.type.startsWith("image/")) {
+        console.log("[chat] Adding image:", file.name);
         imageContents.push({
           type: "image_url",
           image_url: {
@@ -468,7 +422,7 @@ export default async function handler(
           }
         });
       } else {
-        console.log("[chat] Unknown file type, skipping:", file.type);
+        console.log("[chat] Unexpected file type (PDFs should be converted client-side):", file.type);
       }
     }
     console.log("[chat] Total imageContents:", imageContents.length);
