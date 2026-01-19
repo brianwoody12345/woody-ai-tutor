@@ -103,8 +103,8 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
       {/* Input Area */}
       <div className="flex items-end gap-2.5">
-        {/* Upload Button */}
-        <div className="flex-shrink-0">
+        {/* Upload Button with Helper Text */}
+        <div className="flex-shrink-0 flex flex-col items-center gap-1">
           <input
             ref={fileInputRef}
             type="file"
@@ -131,6 +131,9 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
           >
             <Plus className="w-4 h-4 text-muted-foreground" />
           </Button>
+          <span className="text-[9px] text-muted-foreground/60 text-center leading-tight max-w-[60px]">
+            Upload PDF or image
+          </span>
         </div>
 
         {/* Text Input */}

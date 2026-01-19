@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { pdf } from "pdf-to-img";
+import * as pdf2img from "pdf-img-convert";
 
 // The exact system prompt matching the custom GPT with EXPLICIT table formatting
 const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
@@ -296,19 +296,29 @@ interface OpenAIMessage {
 }
 
 // Helper function to convert PDF pages to base64 images for vision
+// Uses pdf-img-convert which is pure JavaScript and works in serverless environments
 async function convertPdfToImages(base64Data: string): Promise<string[]> {
   try {
     // Remove the data URL prefix if present
     const base64Content = base64Data.replace(/^data:application\/pdf;base64,/, '');
     const buffer = Buffer.from(base64Content, 'base64');
     
-    const images: string[] = [];
-    const document = await pdf(buffer, { scale: 2.0 }); // Higher scale for better math readability
+    // Convert PDF to images using pdf-img-convert (pure JS, serverless compatible)
+    // Scale 2.0 for high resolution math readability
+    const pagesAsImages = await pdf2img.convert(buffer, {
+      scale: 2.0,
+      base64: true, // Return base64 strings directly
+    });
     
-    for await (const page of document) {
-      const base64Image = page.toString('base64');
-      images.push(`data:image/png;base64,${base64Image}`);
-    }
+    // Map to data URLs for OpenAI vision
+    const images: string[] = pagesAsImages.map((pageData: string | Uint8Array) => {
+      if (typeof pageData === 'string') {
+        return `data:image/png;base64,${pageData}`;
+      }
+      // If Uint8Array, convert to base64
+      const base64 = Buffer.from(pageData).toString('base64');
+      return `data:image/png;base64,${base64}`;
+    });
     
     return images;
   } catch (error) {
