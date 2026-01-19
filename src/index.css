@@ -179,6 +179,20 @@
   color: inherit;
 }
 
+/* IMPORTANT: Tailwind's global `border-border` utility sets border-color on *every* element.
+   KaTeX uses borders to draw radicals/overlines, so we must force those borders
+   to follow the math color (currentColor). */
+.katex,
+.katex * {
+  border-color: currentColor;
+}
+
+/* Some KaTeX constructs use SVG; ensure they inherit the math color too. */
+.katex svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
 /* Message bubble KaTeX — more refined */
 .message-content .katex-display {
   margin: 0.875rem 0;
