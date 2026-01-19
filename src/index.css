@@ -183,8 +183,25 @@
 }
 
 /* Global KaTeX hardening:
-   Tailwind's preflight sets border-width: 0 on many elements.
-   KaTeX draws radicals/overlines/fraction bars using borders, so force a visible width + color. */
+   KaTeX outputs BOTH HTML and MathML. If HTML glyphs/lines get affected by CSS/fonts,
+   the MathML version still renders correctly in modern browsers.
+   We therefore force MathML as the source of truth. */
+.katex .katex-html {
+  display: none;
+}
+
+.katex .katex-mathml {
+  position: static;
+  width: auto;
+  height: auto;
+  clip: auto;
+  overflow: visible;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+/* Keep line color consistent (for any KaTeX HTML that might still appear) */
 .katex,
 .katex * {
   border-color: currentColor;
