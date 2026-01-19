@@ -1,7 +1,6 @@
 import { memo, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { User, Bot, FileText, Image as ImageIcon } from 'lucide-react';
-import 'katex/dist/katex.min.css';
 import katex from 'katex';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
 
