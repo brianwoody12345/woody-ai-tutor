@@ -183,13 +183,8 @@
 }
 
 /* Global KaTeX hardening:
-   KaTeX outputs BOTH HTML and MathML. If HTML glyphs/lines get affected by CSS/fonts,
-   the MathML version still renders correctly in modern browsers.
-   We therefore force MathML as the source of truth. */
-.katex .katex-html {
-  display: none;
-}
-
+   We render KaTeX as MathML-only in the renderer (output: 'mathml'),
+   so we just ensure MathML isn't clipped or visually hidden. */
 .katex .katex-mathml {
   position: static;
   width: auto;
@@ -199,27 +194,6 @@
   padding: 0;
   margin: 0;
   border: 0;
-}
-
-/* Keep line color consistent (for any KaTeX HTML that might still appear) */
-.katex,
-.katex * {
-  border-color: currentColor;
-}
-
-.katex svg {
-  fill: currentColor;
-  stroke: currentColor;
-}
-
-.katex .mfrac .frac-line,
-.katex .overline .overline-line,
-.katex .underline .underline-line,
-.katex .sqrt .rule,
-.katex .sqrt .sqrt-line,
-.katex .hline,
-.katex .hdashline {
-  border-bottom-width: 1px;
 }
 
 /* Message bubble KaTeX — more refined */

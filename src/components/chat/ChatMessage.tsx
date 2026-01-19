@@ -64,6 +64,7 @@ function renderCellWithLatex(cell: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -78,6 +79,7 @@ function renderCellWithLatex(cell: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -92,6 +94,7 @@ function renderCellWithLatex(cell: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -106,6 +109,7 @@ function renderCellWithLatex(cell: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -242,6 +246,7 @@ function renderMathContent(content: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       })}</div>`;
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -255,6 +260,7 @@ function renderMathContent(content: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       })}</div>`;
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -268,6 +274,7 @@ function renderMathContent(content: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
@@ -281,6 +288,7 @@ function renderMathContent(content: string): string {
         throwOnError: false,
         strict: false,
         trust: true,
+        output: 'mathml',
       });
     } catch {
       return `<code>${escapeHtml(String(math))}</code>`;
