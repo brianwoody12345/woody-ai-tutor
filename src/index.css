@@ -183,8 +183,8 @@
 .message-content .katex-display {
   margin: 0.875rem 0;
   overflow-x: auto;
-  overflow-y: hidden;
-  padding: 0.75rem 1rem;
+  overflow-y: visible; /* allow tall glyphs like \sqrt to render */
+  padding: 0.9rem 1rem; /* a bit more vertical room for radicals/overlines */
   background: hsl(var(--background) / 0.6);
   border-radius: 0.5rem;
   border: 1px solid hsl(var(--border) / 0.5);
