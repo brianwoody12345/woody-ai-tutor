@@ -63,9 +63,9 @@ export function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
     onSend(trimmedMessage, files);
 
-    // ✅ Clear message AND files after sending
+    // Clear ONLY the text after sending.
+    // Keep files attached for follow-up questions until user removes them.
     setMessage('');
-    setFiles([]);
 
     textareaRef.current?.focus();
   }, [message, files, onSend, isLoading]);
