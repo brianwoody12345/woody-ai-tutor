@@ -5,6 +5,7 @@ import { ChatArea } from '@/components/chat/ChatArea';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { API_BASE_URL } from '@/constants/apiBaseUrl';
 import { toast } from '@/components/ui/sonner';
+import { convertPdfToImages } from '@/lib/pdfToImages';
 import type { ChatMessage, TopicId, UploadedFile } from '@/types/chat';
 
 export default function Index() {
@@ -133,13 +134,33 @@ export default function Index() {
 
       try {
         // Convert files to base64 for API
-        const filesData = await Promise.all(
-          effectiveFiles.map(async (f) => ({
-            name: f.name,
-            type: f.file.type,
-            data: await fileToBase64(f.file),
-          }))
-        );
+        // PDFs are converted to images CLIENT-SIDE to avoid serverless native dependency issues
+        const filesData: Array<{ name: string; type: string; data: string }> = [];
+        
+        for (const f of effectiveFiles) {
+          if (f.file.type === 'application/pdf') {
+            // Convert PDF to images on client
+            console.log('[Index] Converting PDF to images:', f.name);
+            const pdfImages = await convertPdfToImages(f.file);
+            console.log('[Index] PDF converted to', pdfImages.length, 'images');
+            
+            // Add each page as a separate image
+            pdfImages.forEach((imageData, idx) => {
+              filesData.push({
+                name: `${f.name}_page${idx + 1}.png`,
+                type: 'image/png',
+                data: imageData,
+              });
+            });
+          } else {
+            // Regular image - just convert to base64
+            filesData.push({
+              name: f.name,
+              type: f.file.type,
+              data: await fileToBase64(f.file),
+            });
+          }
+        }
 
         // Build conversation history for context (without file data for older messages)
         const conversationHistory = updatedMessages.map((msg) => ({
