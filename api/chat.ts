@@ -2,6 +2,16 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import * as pdf2img from "pdf-img-convert";
 
+// Increase body size limit because PDFs are sent as base64 in JSON.
+// Without this, Vercel will reject or truncate the request, making it look like “no document uploaded”.
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "20mb",
+    },
+  },
+};
+
 // The exact system prompt matching the custom GPT with EXPLICIT table formatting
 const WOODY_SYSTEM_PROMPT = `Woody Calculus — Private Professor 
 
@@ -479,6 +489,17 @@ export default async function handler(
       }
     }
     console.log("[chat] Total imageContents:", imageContents.length);
+  }
+
+  // If user attached files but none could be converted/attached for vision,
+  // fail fast with a clear error instead of letting the model hallucinate "no upload".
+  if (files.length > 0 && imageContents.length === 0) {
+    res
+      .status(422)
+      .send(
+        "We received your file(s), but couldn't process them for analysis. Please try re-uploading, using an image/photo instead of PDF, or a smaller PDF."
+      );
+    return;
   }
 
   // Build the final user message
