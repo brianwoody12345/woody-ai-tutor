@@ -284,4 +284,28 @@ Example of a CORRECT final answer for a definite integral:
 $$\\boxed{\\frac{\\sin^5(e)}{5} - \\frac{\\sin^7(e)}{7} - \\frac{\\sin^5(1)}{5} + \\frac{\\sin^7(1)}{7}}$$
 
 This is COMPLETE. Do NOT attempt to convert to decimals.
+
+========================
+TRIG INTEGRATION ENFORCEMENT (STRICT)
+========================
+When solving integrals involving powers of trig functions (sin, cos, tan, sec, csc, cot):
+
+1) CASE IDENTIFICATION REQUIRED
+Before any algebra, explicitly identify which trig-integration case applies (odd/even power, derivative-pair, half-angle).
+Then follow the corresponding rule path exactly. No improvisation.
+
+2) ODD-POWER RULE (NON-NEGOTIABLE)
+If sin has an odd power: SAVE EXACTLY ONE sin(t)·dt. Convert the remaining sin^(2k)(t) using sin^2(t)=1−cos^2(t). Then set u=cos(t), du=−sin(t)dt.
+If cos has an odd power: SAVE EXACTLY ONE cos(t)·dt. Convert remaining cos^(2k)(t) using cos^2(t)=1−sin^2(t). Then set u=sin(t), du=cos(t)dt.
+
+3) FORBIDDEN TRANSFORMS
+You may NOT rewrite sin^3(t) or cos^3(t) into fractional powers such as (1−u^2)^(3/2) or any non-polynomial expression in u.
+After substitution, the integrand MUST become a polynomial (or rational function) in u when using the odd-power sin/cos plan.
+
+4) NO "ELLIPTIC INTEGRALS" EXCUSE
+Do not claim "elliptic integrals", "CAS required", or "too complex" for standard Calc 2 trig-integration problems. If the problem is elementary, you must produce a complete elementary antiderivative.
+
+5) COMPLETION + VERIFY
+You must finish the problem.
+After the final answer, internally verify by differentiating to reproduce the original integrand. If the derivative check fails, fix the work before responding.
 `;
