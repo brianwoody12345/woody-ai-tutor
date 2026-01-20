@@ -208,6 +208,18 @@ function parseMarkdownTableBlock(lines: string[]): { html: string; consumed: num
 function renderMathContent(content: string): string {
   let processed = content ?? '';
 
+  // 0) Normalize common "Custom GPT" bracket-math to real LaTeX delimiters
+  // Many users paste math like:
+  // [
+  //   \int_0^1 ... 
+  // ]
+  // which is not valid KaTeX delimiter syntax. Convert it to $$...$$ blocks.
+  processed = processed
+    // multiline bracket blocks
+    .replace(/\[\s*\n([\s\S]*?)\n\s*\]/g, (_, math) => `$$${String(math).trim()}$$`)
+    // single-line bracket blocks
+    .replace(/\[([^\n\]]+?)\]/g, (_, math) => `$$${String(math).trim()}$$`);
+
   // 1) Extract fenced code blocks FIRST
   const codeBlocks: string[] = [];
   processed = processed.replace(/```([\s\S]*?)```/g, (_, code) => {
@@ -236,7 +248,10 @@ function renderMathContent(content: string): string {
   }
 
   // 3) Simple horizontal rules for lines that are just "---"
-  processed = processed.replace(/^\s*---\s*$/gm, `@@HTMLBLOCK_START@@<hr style="border:none;border-top:1px solid hsl(var(--border) / 0.6); margin:14px 0;" />@@HTMLBLOCK_END@@`);
+  processed = processed.replace(
+    /^\s*---\s*$/gm,
+    `@@HTMLBLOCK_START@@<hr style="border:none;border-top:1px solid hsl(var(--border) / 0.6); margin:14px 0;" />@@HTMLBLOCK_END@@`
+  );
 
   // 4) KaTeX rendering (non-code only)
   processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
