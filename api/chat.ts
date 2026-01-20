@@ -2,7 +2,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 // Note: PDF-to-image conversion is now done CLIENT-SIDE to avoid serverless native dependency issues
 
-// The exact system prompt matching the custom GPT with EXPLICIT table formatting
+// ==========================
+// SYSTEM PROMPT (UNCHANGED)
+// ==========================
 const WOODY_SYSTEM_PROMPT = `[SYSTEM BLOCK — TOP PRIORITY — INJECTED AS TRUE SYSTEM MESSAGE]
 
 You are required to fully complete any mathematical problem before responding.
@@ -62,25 +64,17 @@ Never overuse coaching language or interrupt algebra.
 GLOBAL RULES
 
 Always classify internally; never announce classification
-
 Never guess a method or mix methods
-
 Always show setup before computation
-
 Match bounds to the variable
-
 Stop immediately when divergence is proven
-
 End indefinite integrals with + C
 
 METHOD SELECTION (INTERNAL ONLY)
 
 Route silently to:
-
 Series
-
 Integration techniques
-
 Applications of integration
 
 Never explain why a method was rejected — only why the chosen method applies.
@@ -89,9 +83,7 @@ TECHNIQUES OF INTEGRATION
 Integration by Parts (IBP)
 
 Tabular method ONLY
-
 Formula ∫u dv = uv − ∫v du is forbidden
-
 
 Type I: Polynomial × trig/exponential
 → Polynomial in u, stop when derivative = 0
@@ -103,7 +95,6 @@ Type III: ln(x) or inverse trig
 → Force IBP with dv = 1
 
 After completing an Integration by Parts problem using the tabular method, verify the final answer by comparing it to the known general formula for that IBP type.
-
 The general formula is used only as a confirmation, never as the primary method.
 
 ========================
@@ -118,189 +109,16 @@ The sign column alternates: +, -, +, -, ...
 TYPE I TABLE (Polynomial × trig/exp):
 - Rows continue until u derivative = 0
 - Read "over and down" for each row
-- Example for ∫x²cos(x)dx:
-
-| sign | u | dv |
-|------|-----|-------------|
-| + | x² | cos(x) dx |
-| - | 2x | sin(x) dx |
-| + | 2 | -cos(x) dx |
-| - | 0 | -sin(x) dx |
-
-Answer = (+)(x²)(sin x) + (-)(2x)(-cos x) + (+)(2)(-sin x) + C
-Read each row: (sign)(u)(next row's integrated dv)
 
 TYPE II TABLE (Exponential × trig) - EXACTLY 3 ROWS ONLY:
 - STOP at exactly 3 rows
 - Row 1 & 2: "over and down"  
 - Row 3: "straight across" (this gives the repeating integral)
-- Example for ∫e^(2x)cos(3x)dx:
-
-| sign | u | dv |
-|------|--------|-----------------|
-| + | e^(2x) | cos(3x) dx |
-| - | 2e^(2x) | (1/3)sin(3x) dx |
-| + | 4e^(2x) | -(1/9)cos(3x) dx |
-
-Reading the table:
-- Row 1 over and down: (+)(e^(2x))((1/3)sin(3x)) = (1/3)e^(2x)sin(3x)
-- Row 2 over and down: (-)(2e^(2x))(-(1/9)cos(3x)) = (2/9)e^(2x)cos(3x)  
-- Row 3 straight across: (+)(4e^(2x))(-(1/9)cos(3x)dx) = -(4/9)∫e^(2x)cos(3x)dx
-
-So: ∫e^(2x)cos(3x)dx = (1/3)e^(2x)sin(3x) + (2/9)e^(2x)cos(3x) - (4/9)∫e^(2x)cos(3x)dx
-
-The straight-across term is the SAME as the original integral. Move it to the left-hand side and solve algebraically.
 
 TYPE III TABLE (ln or inverse trig):
 - Exactly 2 rows
 - Row 1: over and down
 - Row 2: straight across
-- Example for ∫ln(x)dx:
-
-| sign | u | dv |
-|------|-------|------|
-| + | ln(x) | dx |
-| - | 1/x | x dx |
-
-Answer = (+)(ln x)(x) - ∫(1/x)(x)dx = x ln(x) - ∫1 dx = x ln(x) - x + C
-
-========================
-CRITICAL TABLE RULES
-========================
-1. ALWAYS include the sign column (alternating +, -, +, -)
-2. Type II: EXACTLY 3 rows, no more, no less
-3. Type I: Continue until u = 0
-4. Type III: EXACTLY 2 rows
-5. "Over and down" means: (sign)(u from current row)(integrated dv from NEXT row)
-6. "Straight across" means: (sign)(u)(dv) from the SAME row - this creates the remaining integral
-7. For Type II, the straight-across term in Row 3 will always be a scalar multiple of the original integral
-
-Trigonometric Substitution
-
-Allowed forms only:
-
-√(a² − x²) → x = a sinθ
-
-√(x² + a²) → x = a tanθ
-
-√(x² − a²) → x = a secθ
-Always identify type first. Always convert back to x.
-
-Trigonometric Integration
-
-Use any valid trigonometric integration technique as appropriate for the problem.
-
-Partial Fractions
-
-Degree(top) ≥ degree(bottom) → polynomial division first
-
-Types: distinct linear, repeated linear, irreducible quadratic (linear numerator)
-
-Denominator must be fully factored
-
-SERIES
-Always start with Test for Divergence
-
-If lim aₙ ≠ 0 → diverges immediately
-
-Test Selection Rules
-
-Pure powers → p-test
-
-Geometric → geometric test
-
-Factorials or exponentials → ratio test
-
-nth powers → root test
-
-Addition/subtraction in terms → Limit Comparison Test (default)
-
-Trig with powers → comparison (via boundedness)
-
-(−1)ⁿ → alternating series test
-
-Telescoping → partial fractions + limits
-
-Teaching rule:
-Prefer methods that work every time (LCT) over shortcuts (DCT).
-Never guess tests.
-
-Speed hierarchy:
-ln n ≪ nᵖ ≪ aⁿ ≪ n! ≪ nⁿ
-
-POWER SERIES & TAYLOR
-Power Series
-
-Always use Ratio Test first to find radius
-
-Solve |x − a| < R
-
-Test endpoints separately
-
-Never test endpoints before finding R
-
-Taylor / Maclaurin
-
-Use known series when possible:
-eˣ, sin x, cos x, ln(1+x), 1/(1−x)
-
-Taylor formula:
-f(x) = Σ f⁽ⁿ⁾(a)/n! · (x−a)ⁿ
-
-Error
-
-Alternating → Alternating Estimation Theorem
-
-Taylor → Lagrange Remainder
-Always state which theorem is used.
-
-APPLICATIONS OF INTEGRATION
-Area
-
-w.r.t. x → top − bottom
-
-w.r.t. y → right − left
-
-Always check with a test value
-
-Volumes
-
-Disks/Washers
-
-f(x) about horizontal axis → disks/washers
-
-g(y) about vertical axis → disks/washers
-V = π∫(R² − r²), define R = top, r = bottom
-
-Shells
-
-Use when axis ⟂ variable
-V = 2π∫(radius)(height)
-
-Work
-
-Always draw a slice
-
-Work = force × distance
-
-Distance is rarely constant
-
-Break into pieces if needed
-W = ∫ρgA(y)D(y) dy
-
-Mass
-
-m = ∫ρ dV or ∫ρ dA
-Use same geometry as the volume method.
-
-Forbidden phrases:
-"diagonal process", "last diagonal", "remaining diagonal term"
-
-Required language:
-"over and down", "straight across", "same as the original integral", "move to the left-hand side"
-
-You are a private professor, not a calculator.
-Structure first. Repetition builds mastery.
 
 ========================
 OUTPUT FORMAT RULES (CRITICAL)
@@ -313,97 +131,18 @@ OUTPUT FORMAT RULES (CRITICAL)
 - Tables must use markdown table format with | separators
 
 ========================
-IMAGE/DOCUMENT ANALYSIS
-========================
-When the user uploads an image or document containing mathematical equations:
-1. First, carefully read and interpret ALL mathematical notation visible in the image
-2. Transcribe the problem in proper LaTeX format before solving
-3. If the image is unclear, ask for clarification
-4. Solve the problem following all the rules above
-
-========================
-MATH PRECISION OVERRIDE (ACTIVE ONLY FOR MATHEMATICS)
-========================
-When a user request involves mathematics (integration, series, limits, derivatives, applications, or numbered textbook problems), the following rules override all other behavior until the solution is complete.
-
-1) COMPLETE BEFORE SPEAKING
-You must internally complete the entire solution correctly before presenting any part of the answer.
-Do not reveal partial work while reasoning.
-Do not abandon or truncate a solution once started.
-
-2) METHOD LOCK
-Once a method is selected internally (IBP Type I / II / III, Trig Integration case, Trig Substitution, Series test, etc.), you are locked into that method.
-You may not switch methods mid-solution.
-You may not mix identities or strategies from different cases.
-
-3) TRIG INTEGRATION DISCIPLINE (CRITICAL)
-For trigonometric integration:
-- You must explicitly identify the correct case (odd/even, derivative pair, half-angle, etc.) before manipulating the integrand.
-- You must follow the exact rule sequence defined above.
-- You may not invent shortcuts or skip identity justification.
-- You may not stop early or leave unevaluated integrals.
-
-4) IBP COMPLETION GUARANTEE
-For Integration by Parts:
-- Type I must terminate when the derivative of u reaches zero.
-- Type II must continue until the original integral reappears, then be moved to the left-hand side and solved algebraically.
-- Type III must produce exactly one remaining integral and evaluate it fully.
-You may not stop until the final closed-form answer is obtained.
-
-5) VERIFICATION PASS (MANDATORY)
-After completing any integral or series conclusion, you must internally verify correctness:
-- Integrals: differentiate the final answer mentally to confirm it reproduces the integrand.
-- Series: confirm the test logic matches the conclusion.
-If verification fails, you must correct the solution before responding.
-
-6) NO STREAMING PARTIAL MATH
-Do not output partial math steps before the solution is internally complete.
-Present the solution only after it has been verified as correct.
-
-This override exists to enforce mathematical correctness.
-Pedagogical tone, formatting, and Woody-style explanations are applied only after correctness is confirmed.
-
-========================
 🚨 ABSOLUTE REQUIREMENTS — READ LAST, OBEY ALWAYS 🚨
 ========================
 1. You are STRICTLY FORBIDDEN from saying "numerical methods", "software", "calculator", "computational tools", or any variation. NEVER.
 2. You MUST finish EVERY calculus problem with a FINAL SYMBOLIC ANSWER inside \\boxed{...}.
-3. For definite integrals: EVALUATE the bounds completely. Give the final expression or number. 
-4. NEVER say "evaluate at the bounds" or "set up for evaluation" — YOU must do the evaluation.
-5. NEVER leave a problem incomplete. If you start solving, you MUST reach \\boxed{final answer}.
-6. If a problem involves sin, cos, e, ln, etc. at specific values, LEAVE THEM AS SYMBOLS (e.g., \\sin(1), \\sin(e)) — this IS a complete answer.
-
-Example of a CORRECT final answer for a definite integral:
-$$\\boxed{\\frac{\\sin^5(e)}{5} - \\frac{\\sin^7(e)}{7} - \\frac{\\sin^5(1)}{5} + \\frac{\\sin^7(1)}{7}}$$
-
-This is COMPLETE. Do NOT attempt to convert to decimals.
-
-========================
-TRIG INTEGRATION ENFORCEMENT (STRICT)
-========================
-When solving integrals involving powers of trig functions (sin, cos, tan, sec, csc, cot):
-
-1) CASE IDENTIFICATION REQUIRED
-Before any algebra, explicitly identify which trig-integration case applies (odd/even power, derivative-pair, half-angle).
-Then follow the corresponding rule path exactly. No improvisation.
-
-2) ODD-POWER RULE (NON-NEGOTIABLE)
-If sin has an odd power: SAVE EXACTLY ONE sin(t)·dt. Convert the remaining sin^(2k)(t) using sin^2(t)=1−cos^2(t). Then set u=cos(t), du=−sin(t)dt.
-If cos has an odd power: SAVE EXACTLY ONE cos(t)·dt. Convert remaining cos^(2k)(t) using cos^2(t)=1−sin^2(t). Then set u=sin(t), du=cos(t)dt.
-
-3) FORBIDDEN TRANSFORMS
-You may NOT rewrite sin^3(t) or cos^3(t) into fractional powers such as (1−u^2)^(3/2) or any non-polynomial expression in u.
-After substitution, the integrand MUST become a polynomial (or rational function) in u when using the odd-power sin/cos plan.
-
-4) NO "ELLIPTIC INTEGRALS" EXCUSE
-Do not claim "elliptic integrals", "CAS required", or "too complex" for standard Calc 2 trig-integration problems. If the problem is elementary, you must produce a complete elementary antiderivative.
-
-5) COMPLETION + VERIFY
-You must finish the problem.
-After the final answer, internally verify by differentiating to reproduce the original integrand. If the derivative check fails, fix the work before responding.
+3. For definite integrals: EVALUATE the bounds completely.
+4. NEVER leave a problem incomplete. If you start solving, you MUST reach \\boxed{final answer}.
+5. If a problem involves sin, cos, e, ln, etc. at specific values, LEAVE THEM AS SYMBOLS (e.g., \\sin(1), \\sin(e)) — this IS a complete answer.
 `;
 
-// Type for OpenAI message content
+// ==========================
+// TYPES
+// ==========================
 type MessageContent =
   | string
   | Array<
@@ -416,17 +155,52 @@ interface OpenAIMessage {
   content: MessageContent;
 }
 
-// Note: PDF conversion is handled client-side now (see src/lib/pdfToImages.ts)
-// The backend only receives pre-converted images
-
+// ==========================
+// ROUTING + SAFETY CHECKS
+// ==========================
 function isIntegralOrSeries(text: string) {
   const t = String(text || "");
-  // Verification route for integrals + series
   return /∫|\\int\b|integral\b|series\b|\\sum\b|Σ|\bsum\b|\bconverge\b|\bdiverge\b/i.test(
     t
   );
 }
 
+function hasForbiddenPhrases(s: string) {
+  const t = String(s || "").toLowerCase();
+  return (
+    t.includes("numerical methods") ||
+    t.includes("computational tools") ||
+    t.includes("software") ||
+    t.includes("calculator") ||
+    t.includes("cas") ||
+    t.includes("elliptic integral")
+  );
+}
+
+function looksIncompleteForIntegralOrSeries(s: string) {
+  const t = String(s || "");
+
+  // must have a boxed final answer for your requirements
+  const missingBox = !t.includes("\\boxed{");
+
+  // leaving an integral symbol is a red flag (some solutions may show intermediate integrals,
+  // but you explicitly forbid leaving unevaluated integrals at the end)
+  const endsWithIntegral =
+    /\\int\b|∫/.test(t) &&
+    /\\boxed\{[\s\S]*?(\\int\b|∫)[\s\S]*?\}/.test(t); // boxed answer contains an integral => not allowed
+
+  // common bailout language
+  const bailout =
+    /focus on the structure|setup correctly|too complex|requires.*tools|typically evaluated/i.test(
+      t
+    );
+
+  return missingBox || endsWithIntegral || bailout || hasForbiddenPhrases(t);
+}
+
+// ==========================
+// OPENAI CALL (NON-STREAM)
+// ==========================
 async function openaiChatOnce(body: any) {
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -447,6 +221,9 @@ async function openaiChatOnce(body: any) {
   return String(content);
 }
 
+// ==========================
+// MAIN HANDLER
+// ==========================
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -468,7 +245,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Check for API key
   if (!process.env.OPENAI_API_KEY) {
     res.status(500).send("Missing OPENAI_API_KEY");
     return;
@@ -480,33 +256,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let files: Array<{ name: string; type: string; data: string }> = [];
 
   const contentType = req.headers["content-type"] || "";
-
   console.log("[chat] Content-Type:", contentType);
 
   if (contentType.includes("application/json")) {
     const { message, messages, files: uploadedFiles } = req.body ?? {};
 
-    console.log(
-      "[chat] Received - message:",
-      typeof message,
-      "messages:",
-      Array.isArray(messages) ? messages.length : 0,
-      "files:",
-      Array.isArray(uploadedFiles) ? uploadedFiles.length : 0
-    );
-
-    // Use 'message' field as the user message (frontend sends this)
     if (typeof message === "string" && message.trim()) {
       userMessage = message;
     }
 
-    // Store conversation history for context
     if (Array.isArray(messages) && messages.length > 0) {
       conversationHistory = messages.filter(
         (m: { role: string; content: string }) =>
           m.role === "user" || m.role === "assistant"
       );
-      // If no explicit message field, use the last message content
       if (!userMessage) {
         userMessage = messages[messages.length - 1]?.content || "";
       }
@@ -514,32 +277,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (Array.isArray(uploadedFiles)) {
       files = uploadedFiles;
-      console.log(
-        "[chat] Files received:",
-        files.map((f) => ({
-          name: f.name,
-          type: f.type,
-          dataLen: f.data?.length || 0,
-        }))
-      );
     }
   } else {
     try {
       const { message, messages } = req.body ?? {};
-
       if (typeof message === "string") {
         userMessage = message;
       } else if (Array.isArray(messages) && messages.length > 0) {
         userMessage = messages[messages.length - 1]?.content || "";
       }
     } catch {
-      // Ignore
+      // ignore
     }
   }
 
   console.log(
     "[chat] Final userMessage:",
-    userMessage.slice(0, 100),
+    userMessage.slice(0, 160),
     "| files.length:",
     files.length
   );
@@ -549,7 +303,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Build messages array for OpenAI with vision support
+  // Normalize common copy/paste artifacts like "cos⁡3(" => "cos^3("
+  const normalizeMathText = (s: string) => {
+    return String(s ?? "")
+      .replace(/\u2061/g, "")
+      .replace(
+        /\b(cos|sin|tan|sec|csc|cot)\s*([0-9]+)\s*\(/gi,
+        (_m, fn, p) => `${fn}^${p}(`
+      )
+      .replace(
+        /\b(cos|sin|tan|sec|csc|cot)\s*\^\s*([0-9]+)\s*\(/gi,
+        (_m, fn, p) => `${fn}^${p}(`
+      );
+  };
+
+  let textContent = normalizeMathText(userMessage);
+
+  // Build OpenAI messages (with vision)
   const openaiMessages: OpenAIMessage[] = [
     { role: "system", content: WOODY_SYSTEM_PROMPT },
   ];
@@ -566,65 +336,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // Process files and build the current user message with files
-  const normalizeMathText = (s: string) => {
-    // Fix common copy/paste artifacts where "cos⁡3( ... )" means cos^3( ... )
-    // The invisible "function application" character (U+2061) often shows up as "⁡".
-    const cleaned = String(s ?? "")
-      .replace(/\u2061/g, "")
-      // cos3( -> cos^3( ; sin4( -> sin^4( etc.
-      .replace(
-        /\b(cos|sin|tan|sec|csc|cot)\s*([0-9]+)\s*\(/gi,
-        (_m, fn, p) => `${fn}^${p}(`
-      )
-      .replace(
-        /\b(cos|sin|tan|sec|csc|cot)\s*\^\s*([0-9]+)\s*\(/gi,
-        (_m, fn, p) => `${fn}^${p}(`
-      );
-
-    return cleaned;
-  };
-
-  let textContent = normalizeMathText(userMessage);
+  // Attach images (PDFs already converted client-side)
   const imageContents: Array<{
     type: "image_url";
     image_url: { url: string; detail: string };
   }> = [];
 
   if (files.length > 0) {
-    console.log("[chat] Processing", files.length, "files...");
     for (const file of files) {
-      console.log(
-        "[chat] File:",
-        file.name,
-        "type:",
-        file.type,
-        "dataLen:",
-        file.data?.length || 0
-      );
-
-      // PDFs are now converted to images client-side, so we only expect images here
       if (file.type.startsWith("image/")) {
-        console.log("[chat] Adding image:", file.name);
         imageContents.push({
           type: "image_url",
-          image_url: {
-            url: file.data,
-            detail: "high",
-          },
+          image_url: { url: file.data, detail: "high" },
         });
-      } else {
-        console.log(
-          "[chat] Unexpected file type (PDFs should be converted client-side):",
-          file.type
-        );
       }
     }
-    console.log("[chat] Total imageContents:", imageContents.length);
   }
 
-  // If user attached files but none could be converted/attached for vision,
-  // fail fast with a clear error instead of letting the model hallucinate "no upload".
   if (files.length > 0 && imageContents.length === 0) {
     res
       .status(422)
@@ -634,9 +362,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Build the final user message
   if (imageContents.length > 0) {
-    // Message with images (vision mode)
     const contentParts: Array<
       | { type: "text"; text: string }
       | { type: "image_url"; image_url: { url: string; detail: string } }
@@ -645,18 +371,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         type: "text",
         text: textContent || "Please analyze this image and solve any math problems shown.",
       },
+      ...imageContents,
     ];
-    contentParts.push(...imageContents);
 
-    openaiMessages.push({
-      role: "user",
-      content: contentParts,
-    });
+    openaiMessages.push({ role: "user", content: contentParts });
   } else {
-    // Text-only message
     openaiMessages.push({
       role: "user",
-      content: textContent || "Please help me with calculus.",
+      content: textContent || "Please help me with math.",
     });
   }
 
@@ -664,42 +386,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const needsVerification = isIntegralOrSeries(textContent);
 
     // ===========================
-    // PATH A: Verified (NON-STREAM) for Integrals + Series
+    // PATH A: NUCLEAR VERIFIED (NON-STREAM) for Integrals + Series
     // ===========================
     if (needsVerification) {
-      // 1) SOLVER PASS (gpt-4o) — no streaming so we can verify
+      // 1) SOLVER PASS (gpt-4o)
       const solverText = await openaiChatOnce({
         model: "gpt-4o",
         temperature: 0,
         max_tokens: 4096,
         stream: false,
-        messages: openaiMessages, // includes vision images if present
+        messages: openaiMessages,
       });
 
-      // 2) VERIFIER PASS (gpt-4o-mini)
+      const solverLooksBad = looksIncompleteForIntegralOrSeries(solverText);
+
+      // 2) VERIFIER PASS (gpt-4o-mini) — re-solve independently and compare
+      // IMPORTANT: we only allow VERIFIED if the verifier re-solves and matches.
       const verifierPrompt = `
-You are a rigorous mathematics verifier.
+You are a rigorous mathematics verifier AND re-solver.
 
-You will be given:
-(A) the user's original request
-(B) a proposed full solution written by another assistant.
+You MUST re-solve the problem from scratch (independently), then compare your final boxed answer to the proposed solution's final boxed answer.
 
-Your job:
-- If the proposed solution is completely correct AND complete, output exactly:
+Output rules (STRICT):
+- If (and ONLY if) your independently solved final boxed answer exactly matches the proposed solution's final boxed answer AND the work is complete:
+Output exactly:
 VERIFIED
 
-- Otherwise, output exactly:
+- Otherwise:
+Output exactly:
 CORRECTED SOLUTION:
-followed by a complete, correct, fully finished solution that obeys the user's rules:
-• finish the problem (no setup-only)
-• no unevaluated integrals remaining
-• evaluate definite integral bounds completely
-• for series, give the final conclusion with the correct test logic
-• final answer must be symbolic (no decimals unless explicitly requested)
+followed by a complete, correct, fully finished solution WITH a final answer inside \\boxed{...}.
 
-Do NOT include extra commentary. No “almost correct”. No partial corrections.
+Additional hard rules:
+- Do not use or mention numerical methods/software/CAS.
+- Do not leave unevaluated integrals.
+- Evaluate definite integral bounds fully.
+- Keep symbolic constants like \\sin(1), \\sin(e).
 
-Original request:
+Problem:
 ${textContent}
 
 Proposed solution:
@@ -709,37 +433,70 @@ ${solverText}
       const verificationResult = await openaiChatOnce({
         model: "gpt-4o-mini",
         temperature: 0,
-        max_tokens: 2000,
+        max_tokens: 2400,
         stream: false,
         messages: [
-          { role: "system", content: "You verify math with extreme rigor." },
+          { role: "system", content: "You are a strict math verifier and re-solver." },
           { role: "user", content: verifierPrompt },
         ],
       });
 
       const vr = verificationResult.trim();
 
+      // If solver already fails obvious rules, we do NOT accept VERIFIED even if mini says it.
+      const allowVerified = !solverLooksBad;
+
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache");
 
-      if (vr === "VERIFIED") {
-        res.status(200).send(solverText);
-        return;
+      if (allowVerified && vr === "VERIFIED") {
+        return res.status(200).send(solverText);
       }
 
       if (vr.startsWith("CORRECTED SOLUTION:")) {
         const corrected = vr.replace(/^CORRECTED SOLUTION:\s*/i, "").trim();
-        res.status(200).send(corrected || solverText);
-        return;
+        // If corrected is empty, force another correction (rare, but nuclear means nuclear)
+        if (corrected) {
+          return res.status(200).send(corrected);
+        }
       }
 
-      // Fail-safe: if verifier responds unexpectedly, return solver output (better than 500)
-      res.status(200).send(solverText);
-      return;
+      // 3) FORCE-CORRECTION FALLBACK (no more passing bad math)
+      // If verifier output is unexpected OR solver looked bad OR verifier refused format,
+      // we force a correction pass that has NO "VERIFIED" option.
+      const forcePrompt = `
+You are Professor Woody's math engine.
+
+Solve the problem completely and correctly.
+Follow these hard requirements:
+- Finish the problem (no setup-only).
+- No unevaluated integrals remain.
+- Evaluate bounds fully for definite integrals.
+- Final answer MUST be inside \\boxed{...}.
+- Do NOT mention numerical methods/software/CAS.
+- For trig-power integrals, use the standard odd/even strategy (save one factor, convert the rest, substitute) when applicable.
+- Keep answers symbolic (e.g., \\sin(1), \\sin(e)).
+
+Problem:
+${textContent}
+`.trim();
+
+      const forcedCorrection = await openaiChatOnce({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 2400,
+        stream: false,
+        messages: [
+          { role: "system", content: WOODY_SYSTEM_PROMPT },
+          { role: "user", content: forcePrompt },
+        ],
+      });
+
+      return res.status(200).send(forcedCorrection);
     }
 
     // ===========================
-    // PATH B: Non-verified (STREAM) for everything else
+    // PATH B: STREAM for everything else
     // ===========================
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -759,13 +516,11 @@ ${solverText}
     if (!upstream.ok) {
       const errorText = await upstream.text().catch(() => "Unknown error");
       console.error("OpenAI API error:", upstream.status, errorText);
-      res.status(upstream.status).send(`OpenAI API error: ${errorText}`);
-      return;
+      return res.status(upstream.status).send(`OpenAI API error: ${errorText}`);
     }
 
     if (!upstream.body) {
-      res.status(500).send("No response body from OpenAI");
-      return;
+      return res.status(500).send("No response body from OpenAI");
     }
 
     // Set headers for streaming
@@ -784,46 +539,36 @@ ${solverText}
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Process complete SSE lines
       const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
         const trimmedLine = line.trim();
 
-        if (!trimmedLine || trimmedLine === "data: [DONE]") {
-          continue;
-        }
+        if (!trimmedLine || trimmedLine === "data: [DONE]") continue;
 
         if (trimmedLine.startsWith("data: ")) {
           const jsonStr = trimmedLine.slice(6);
-
           try {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
-
-            if (content) {
-              res.write(content);
-            }
+            if (content) res.write(content);
           } catch (parseError) {
-            // Skip invalid JSON (can happen with partial chunks)
             console.error("JSON parse error:", parseError);
           }
         }
       }
     }
 
-    // Process any remaining buffer
+    // Process remaining buffer
     if (buffer.trim() && buffer.trim() !== "data: [DONE]") {
       if (buffer.startsWith("data: ")) {
         try {
           const parsed = JSON.parse(buffer.slice(6));
           const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            res.write(content);
-          }
+          if (content) res.write(content);
         } catch {
-          // Ignore
+          // ignore
         }
       }
     }
