@@ -404,9 +404,12 @@ After the final answer, internally verify by differentiating to reproduce the or
 `;
 
 // Type for OpenAI message content
-type MessageContent = 
-  | string 
-  | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }>;
+type MessageContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string; detail?: string } }
+    >;
 
 interface OpenAIMessage {
   role: "system" | "user" | "assistant";
@@ -416,10 +419,35 @@ interface OpenAIMessage {
 // Note: PDF conversion is handled client-side now (see src/lib/pdfToImages.ts)
 // The backend only receives pre-converted images
 
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
+function isIntegralOrSeries(text: string) {
+  const t = String(text || "");
+  // Verification route for integrals + series
+  return /∫|\\int\b|integral\b|series\b|\\sum\b|Σ|\bsum\b|\bconverge\b|\bdiverge\b/i.test(
+    t
+  );
+}
+
+async function openaiChatOnce(body: any) {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const errorText = await resp.text().catch(() => "Unknown error");
+    throw new Error(`OpenAI API error ${resp.status}: ${errorText}`);
+  }
+
+  const json = await resp.json();
+  const content = json?.choices?.[0]?.message?.content ?? "";
+  return String(content);
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -457,18 +485,25 @@ export default async function handler(
 
   if (contentType.includes("application/json")) {
     const { message, messages, files: uploadedFiles } = req.body ?? {};
-    
-    console.log("[chat] Received - message:", typeof message, "messages:", Array.isArray(messages) ? messages.length : 0, "files:", Array.isArray(uploadedFiles) ? uploadedFiles.length : 0);
-    
+
+    console.log(
+      "[chat] Received - message:",
+      typeof message,
+      "messages:",
+      Array.isArray(messages) ? messages.length : 0,
+      "files:",
+      Array.isArray(uploadedFiles) ? uploadedFiles.length : 0
+    );
+
     // Use 'message' field as the user message (frontend sends this)
     if (typeof message === "string" && message.trim()) {
       userMessage = message;
     }
-    
+
     // Store conversation history for context
     if (Array.isArray(messages) && messages.length > 0) {
       conversationHistory = messages.filter(
-        (m: { role: string; content: string }) => 
+        (m: { role: string; content: string }) =>
           m.role === "user" || m.role === "assistant"
       );
       // If no explicit message field, use the last message content
@@ -476,15 +511,22 @@ export default async function handler(
         userMessage = messages[messages.length - 1]?.content || "";
       }
     }
-    
+
     if (Array.isArray(uploadedFiles)) {
       files = uploadedFiles;
-      console.log("[chat] Files received:", files.map(f => ({ name: f.name, type: f.type, dataLen: f.data?.length || 0 })));
+      console.log(
+        "[chat] Files received:",
+        files.map((f) => ({
+          name: f.name,
+          type: f.type,
+          dataLen: f.data?.length || 0,
+        }))
+      );
     }
   } else {
     try {
       const { message, messages } = req.body ?? {};
-      
+
       if (typeof message === "string") {
         userMessage = message;
       } else if (Array.isArray(messages) && messages.length > 0) {
@@ -495,7 +537,12 @@ export default async function handler(
     }
   }
 
-  console.log("[chat] Final userMessage:", userMessage.slice(0, 100), "| files.length:", files.length);
+  console.log(
+    "[chat] Final userMessage:",
+    userMessage.slice(0, 100),
+    "| files.length:",
+    files.length
+  );
 
   if (!userMessage && files.length === 0) {
     res.status(400).send("Missing message");
@@ -504,7 +551,7 @@ export default async function handler(
 
   // Build messages array for OpenAI with vision support
   const openaiMessages: OpenAIMessage[] = [
-    { role: "system", content: WOODY_SYSTEM_PROMPT }
+    { role: "system", content: WOODY_SYSTEM_PROMPT },
   ];
 
   // Add conversation history (excluding the last message which we'll add with files)
@@ -513,7 +560,7 @@ export default async function handler(
       if (msg.role === "user" || msg.role === "assistant") {
         openaiMessages.push({
           role: msg.role as "user" | "assistant",
-          content: msg.content
+          content: msg.content,
         });
       }
     }
@@ -523,22 +570,38 @@ export default async function handler(
   const normalizeMathText = (s: string) => {
     // Fix common copy/paste artifacts where "cos⁡3( ... )" means cos^3( ... )
     // The invisible "function application" character (U+2061) often shows up as "⁡".
-    const cleaned = String(s ?? '')
-      .replace(/\u2061/g, '')
+    const cleaned = String(s ?? "")
+      .replace(/\u2061/g, "")
       // cos3( -> cos^3( ; sin4( -> sin^4( etc.
-      .replace(/\b(cos|sin|tan|sec|csc|cot)\s*([0-9]+)\s*\(/gi, (_m, fn, p) => `${fn}^${p}(`)
-      .replace(/\b(cos|sin|tan|sec|csc|cot)\s*\^\s*([0-9]+)\s*\(/gi, (_m, fn, p) => `${fn}^${p}(`);
+      .replace(
+        /\b(cos|sin|tan|sec|csc|cot)\s*([0-9]+)\s*\(/gi,
+        (_m, fn, p) => `${fn}^${p}(`
+      )
+      .replace(
+        /\b(cos|sin|tan|sec|csc|cot)\s*\^\s*([0-9]+)\s*\(/gi,
+        (_m, fn, p) => `${fn}^${p}(`
+      );
 
     return cleaned;
   };
 
   let textContent = normalizeMathText(userMessage);
-  const imageContents: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
+  const imageContents: Array<{
+    type: "image_url";
+    image_url: { url: string; detail: string };
+  }> = [];
 
   if (files.length > 0) {
     console.log("[chat] Processing", files.length, "files...");
     for (const file of files) {
-      console.log("[chat] File:", file.name, "type:", file.type, "dataLen:", file.data?.length || 0);
+      console.log(
+        "[chat] File:",
+        file.name,
+        "type:",
+        file.type,
+        "dataLen:",
+        file.data?.length || 0
+      );
 
       // PDFs are now converted to images client-side, so we only expect images here
       if (file.type.startsWith("image/")) {
@@ -551,7 +614,10 @@ export default async function handler(
           },
         });
       } else {
-        console.log("[chat] Unexpected file type (PDFs should be converted client-side):", file.type);
+        console.log(
+          "[chat] Unexpected file type (PDFs should be converted client-side):",
+          file.type
+        );
       }
     }
     console.log("[chat] Total imageContents:", imageContents.length);
@@ -571,8 +637,14 @@ export default async function handler(
   // Build the final user message
   if (imageContents.length > 0) {
     // Message with images (vision mode)
-    const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: string } }> = [
-      { type: "text", text: textContent || "Please analyze this image and solve any math problems shown." },
+    const contentParts: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string; detail: string } }
+    > = [
+      {
+        type: "text",
+        text: textContent || "Please analyze this image and solve any math problems shown.",
+      },
     ];
     contentParts.push(...imageContents);
 
@@ -589,23 +661,100 @@ export default async function handler(
   }
 
   try {
-    const upstream = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          temperature: 0,
-          stream: true,
-          max_tokens: 4096,
-          messages: openaiMessages,
-        }),
+    const needsVerification = isIntegralOrSeries(textContent);
+
+    // ===========================
+    // PATH A: Verified (NON-STREAM) for Integrals + Series
+    // ===========================
+    if (needsVerification) {
+      // 1) SOLVER PASS (gpt-4o) — no streaming so we can verify
+      const solverText = await openaiChatOnce({
+        model: "gpt-4o",
+        temperature: 0,
+        max_tokens: 4096,
+        stream: false,
+        messages: openaiMessages, // includes vision images if present
+      });
+
+      // 2) VERIFIER PASS (gpt-4o-mini)
+      const verifierPrompt = `
+You are a rigorous mathematics verifier.
+
+You will be given:
+(A) the user's original request
+(B) a proposed full solution written by another assistant.
+
+Your job:
+- If the proposed solution is completely correct AND complete, output exactly:
+VERIFIED
+
+- Otherwise, output exactly:
+CORRECTED SOLUTION:
+followed by a complete, correct, fully finished solution that obeys the user's rules:
+• finish the problem (no setup-only)
+• no unevaluated integrals remaining
+• evaluate definite integral bounds completely
+• for series, give the final conclusion with the correct test logic
+• final answer must be symbolic (no decimals unless explicitly requested)
+
+Do NOT include extra commentary. No “almost correct”. No partial corrections.
+
+Original request:
+${textContent}
+
+Proposed solution:
+${solverText}
+`.trim();
+
+      const verificationResult = await openaiChatOnce({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 2000,
+        stream: false,
+        messages: [
+          { role: "system", content: "You verify math with extreme rigor." },
+          { role: "user", content: verifierPrompt },
+        ],
+      });
+
+      const vr = verificationResult.trim();
+
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache");
+
+      if (vr === "VERIFIED") {
+        res.status(200).send(solverText);
+        return;
       }
-    );
+
+      if (vr.startsWith("CORRECTED SOLUTION:")) {
+        const corrected = vr.replace(/^CORRECTED SOLUTION:\s*/i, "").trim();
+        res.status(200).send(corrected || solverText);
+        return;
+      }
+
+      // Fail-safe: if verifier responds unexpectedly, return solver output (better than 500)
+      res.status(200).send(solverText);
+      return;
+    }
+
+    // ===========================
+    // PATH B: Non-verified (STREAM) for everything else
+    // ===========================
+    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        temperature: 0,
+        stream: true,
+        max_tokens: 4096,
+        messages: openaiMessages,
+      }),
+    });
 
     if (!upstream.ok) {
       const errorText = await upstream.text().catch(() => "Unknown error");
@@ -641,18 +790,18 @@ export default async function handler(
 
       for (const line of lines) {
         const trimmedLine = line.trim();
-        
+
         if (!trimmedLine || trimmedLine === "data: [DONE]") {
           continue;
         }
 
         if (trimmedLine.startsWith("data: ")) {
           const jsonStr = trimmedLine.slice(6);
-          
+
           try {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
-            
+
             if (content) {
               res.write(content);
             }
@@ -682,6 +831,10 @@ export default async function handler(
     res.end();
   } catch (error) {
     console.error("Error in chat handler:", error);
-    res.status(500).send(`Server error: ${error instanceof Error ? error.message : "Unknown error"}`);
+    res
+      .status(500)
+      .send(
+        `Server error: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
   }
 }
