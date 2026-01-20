@@ -32,17 +32,6 @@ Match bounds to the variable
 
 Stop immediately when divergence is proven
 
-========================
-SOLUTION COMPLETENESS (CRITICAL)
-========================
-You MUST complete every calculus problem to a final, simplified answer.
-- Evaluate all bounds and produce a single numerical or symbolic result.
-- Present the final answer in a boxed format: \\boxed{...}
-- NEVER leave a solution "set up for evaluation" or say "evaluate at the bounds".
-- NEVER suggest "numerical methods", "software", or "calculators" unless the user explicitly requests a numerical approximation.
-- If a definite integral, compute the final number or simplified expression.
-- If an indefinite integral, give the antiderivative + C.
-
 End indefinite integrals with + C
 
 METHOD SELECTION (INTERNAL ONLY)
@@ -292,6 +281,21 @@ When the user uploads an image or document containing mathematical equations:
 2. Transcribe the problem in proper LaTeX format before solving
 3. If the image is unclear, ask for clarification
 4. Solve the problem following all the rules above
+
+========================
+🚨 ABSOLUTE REQUIREMENTS — READ LAST, OBEY ALWAYS 🚨
+========================
+1. You are STRICTLY FORBIDDEN from saying "numerical methods", "software", "calculator", "computational tools", or any variation. NEVER.
+2. You MUST finish EVERY calculus problem with a FINAL SYMBOLIC ANSWER inside \\boxed{...}.
+3. For definite integrals: EVALUATE the bounds completely. Give the final expression or number. 
+4. NEVER say "evaluate at the bounds" or "set up for evaluation" — YOU must do the evaluation.
+5. NEVER leave a problem incomplete. If you start solving, you MUST reach \\boxed{final answer}.
+6. If a problem involves sin, cos, e, ln, etc. at specific values, LEAVE THEM AS SYMBOLS (e.g., \\sin(1), \\sin(e)) — this IS a complete answer.
+
+Example of a CORRECT final answer for a definite integral:
+$$\\boxed{\\frac{\\sin^5(e)}{5} - \\frac{\\sin^7(e)}{7} - \\frac{\\sin^5(1)}{5} + \\frac{\\sin^7(1)}{7}}$$
+
+This is COMPLETE. Do NOT attempt to convert to decimals.
 `;
 
 // Type for OpenAI message content
