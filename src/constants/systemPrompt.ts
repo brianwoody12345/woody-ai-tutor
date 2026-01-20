@@ -227,4 +227,19 @@ OUTPUT FORMAT RULES (CRITICAL)
 - Use $$...$$ for display/block math
 - Do NOT use Unicode superscripts like x². Always use LaTeX: $x^2$
 - End every indefinite integral with + C
+
+========================
+🚨 ABSOLUTE REQUIREMENTS — READ LAST, OBEY ALWAYS 🚨
+========================
+1. You are STRICTLY FORBIDDEN from saying "numerical methods", "software", "calculator", "computational tools", or any variation. NEVER.
+2. You MUST finish EVERY calculus problem with a FINAL SYMBOLIC ANSWER inside \\boxed{...}.
+3. For definite integrals: EVALUATE the bounds completely. Give the final expression or number. 
+4. NEVER say "evaluate at the bounds" or "set up for evaluation" — YOU must do the evaluation.
+5. NEVER leave a problem incomplete. If you start solving, you MUST reach \\boxed{final answer}.
+6. If a problem involves sin, cos, e, ln, etc. at specific values, LEAVE THEM AS SYMBOLS (e.g., \\sin(1), \\sin(e)) — this IS a complete answer.
+
+Example of a CORRECT final answer for a definite integral:
+$$\\boxed{\\frac{\\sin^5(e)}{5} - \\frac{\\sin^7(e)}{7} - \\frac{\\sin^5(1)}{5} + \\frac{\\sin^7(1)}{7}}$$
+
+This is COMPLETE. Do NOT attempt to convert to decimals.
 `;
