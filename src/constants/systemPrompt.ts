@@ -73,10 +73,7 @@ Always identify type first. Always convert back to x.
 
 Trigonometric Integration
 
-sin/cos: odd → save one; even → half-angle
-
-sec/tan or csc/cot: save derivative pair
-Never guess substitutions.
+Use any valid trigonometric integration technique as appropriate for the problem.
 
 Partial Fractions
 

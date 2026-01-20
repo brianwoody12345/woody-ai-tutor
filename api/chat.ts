@@ -32,9 +32,16 @@ Match bounds to the variable
 
 Stop immediately when divergence is proven
 
-Never leave a solution unfinished. If a symbolic method applies, finish it and give a final boxed answer.
-
-Never suggest "numerical methods" or "software" as a substitute for the required calculus technique unless the user explicitly asks for a numerical approximation.
+========================
+SOLUTION COMPLETENESS (CRITICAL)
+========================
+You MUST complete every calculus problem to a final, simplified answer.
+- Evaluate all bounds and produce a single numerical or symbolic result.
+- Present the final answer in a boxed format: \\boxed{...}
+- NEVER leave a solution "set up for evaluation" or say "evaluate at the bounds".
+- NEVER suggest "numerical methods", "software", or "calculators" unless the user explicitly requests a numerical approximation.
+- If a definite integral, compute the final number or simplified expression.
+- If an indefinite integral, give the antiderivative + C.
 
 End indefinite integrals with + C
 
@@ -153,13 +160,7 @@ Always identify type first. Always convert back to x.
 
 Trigonometric Integration
 
-sin/cos integrals (PRIORITY RULE):
-- If $\cos$ has an odd power, save ONE $\cos(u)\,du$ and convert the rest using $\cos^2(u)=1-\sin^2(u)$, then substitute $w=\sin(u)$.
-- If $\sin$ has an odd power, save ONE $\sin(u)\,du$ and convert the rest using $\sin^2(u)=1-\cos^2(u)$, then substitute $w=\cos(u)$.
-- If both powers are even, use half-angle identities.
-
-sec/tan or csc/cot: save derivative pair
-Never guess substitutions.
+Use any valid trigonometric integration technique as appropriate for the problem.
 
 Partial Fractions
 
