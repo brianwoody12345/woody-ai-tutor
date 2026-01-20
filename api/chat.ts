@@ -403,14 +403,26 @@ export default async function handler(
   }
 
   // Process files and build the current user message with files
-  let textContent = userMessage;
+  const normalizeMathText = (s: string) => {
+    // Fix common copy/paste artifacts where "cos⁡3( ... )" means cos^3( ... )
+    // The invisible "function application" character (U+2061) often shows up as "⁡".
+    const cleaned = String(s ?? '')
+      .replace(/\u2061/g, '')
+      // cos3( -> cos^3( ; sin4( -> sin^4( etc.
+      .replace(/\b(cos|sin|tan|sec|csc|cot)\s*([0-9]+)\s*\(/gi, (_m, fn, p) => `${fn}^${p}(`)
+      .replace(/\b(cos|sin|tan|sec|csc|cot)\s*\^\s*([0-9]+)\s*\(/gi, (_m, fn, p) => `${fn}^${p}(`);
+
+    return cleaned;
+  };
+
+  let textContent = normalizeMathText(userMessage);
   const imageContents: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
 
   if (files.length > 0) {
     console.log("[chat] Processing", files.length, "files...");
     for (const file of files) {
       console.log("[chat] File:", file.name, "type:", file.type, "dataLen:", file.data?.length || 0);
-      
+
       // PDFs are now converted to images client-side, so we only expect images here
       if (file.type.startsWith("image/")) {
         console.log("[chat] Adding image:", file.name);
@@ -418,8 +430,8 @@ export default async function handler(
           type: "image_url",
           image_url: {
             url: file.data,
-            detail: "high"
-          }
+            detail: "high",
+          },
         });
       } else {
         console.log("[chat] Unexpected file type (PDFs should be converted client-side):", file.type);
@@ -443,19 +455,19 @@ export default async function handler(
   if (imageContents.length > 0) {
     // Message with images (vision mode)
     const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: string } }> = [
-      { type: "text", text: textContent || "Please analyze this image and solve any math problems shown." }
+      { type: "text", text: textContent || "Please analyze this image and solve any math problems shown." },
     ];
     contentParts.push(...imageContents);
-    
+
     openaiMessages.push({
       role: "user",
-      content: contentParts
+      content: contentParts,
     });
   } else {
     // Text-only message
-    openaiMessages.push({ 
-      role: "user", 
-      content: textContent || "Please help me with calculus."
+    openaiMessages.push({
+      role: "user",
+      content: textContent || "Please help me with calculus.",
     });
   }
 
