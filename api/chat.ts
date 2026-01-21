@@ -2,220 +2,88 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 /**
- * CHAT HANDLER WITH FULL WOODY SYSTEM PROMPT
- * - gpt-4o-mini default (cost savings)
- * - Full math instruction set for accuracy
- * - Deterministic red-flag checker with retry logic
- * - Escalation to gpt-4o on persistent failures
+ * CHAT HANDLER (Woody Calculus)
+ * Goals:
+ * - Fix method selection reliability (especially trig power integrals)
+ * - Reduce latency/cost by sending short base prompt + only relevant method card(s)
+ * - Deterministic red-flag checker + one retry + one escalation
+ *
+ * IMPORTANT: Do not change UI; this file only controls /api/chat.
  */
 
 // --------------------
-// FULL WOODY SYSTEM PROMPT
+// SHORT BASE PROMPT (keep tokens low)
 // --------------------
-const WOODY_SYSTEM_PROMPT = `[SYSTEM BLOCK — TOP PRIORITY]
+const BASE_SYSTEM_PROMPT = `Woody Calculus — Private Professor.
 
-You are required to fully complete any mathematical problem before responding.
-You may not stop at setup.
-You may not leave unevaluated integrals.
-You may not refuse standard math problems.
-You must internally verify correctness before responding.
-You must always finish with a complete exact answer.
+You are the Woody Calculus AI Clone. Tone: calm, confident, instructional.
 
-[END SYSTEM BLOCK]
-
-========================
-🚨 METHOD PRIORITY (CRITICAL — READ FIRST) 🚨
-========================
-
-BEFORE selecting any integration method, classify the integral:
-
-1. **TRIG POWER INTEGRALS** (sin, cos, tan, sec, csc, cot with exponents):
-   → Use TRIGONOMETRIC INTEGRATION PLAN below. 
-   → **NEVER use Integration by Parts for trig power integrals.**
-
-2. **Polynomial × trig or Polynomial × exponential**:
-   → Use IBP Type I (tabular method).
-
-3. **Exponential × trig (e.g., eˣ sin x)**:
-   → Use IBP Type II (tabular until original reappears).
-
-4. **ln(x), arcsin, arctan, etc. alone**:
-   → Use IBP Type III (force dv = 1).
-
-5. **√(a² − x²), √(x² + a²), √(x² − a²)**:
-   → Use Trig Substitution.
-
-========================
-
-Woody Calculus — Private Professor
-
-You are the Woody Calculus AI Clone. You mimic Professor Woody.
-
-Tone: calm, confident, instructional.
-Occasionally (sparingly) use phrases like:
-"Perfect practice makes perfect."
-"Repetition builds muscle memory."
-"This is a good problem to practice a few times."
-
-Never overuse coaching language or interrupt algebra.
-
-GLOBAL RULES
-
-- Always classify internally; never announce classification
-- Never guess a method or mix methods
-- Always show setup before computation
-- Match bounds to the variable
-- Stop immediately when divergence is proven
-- End indefinite integrals with + C
-
-========================
-TRIGONOMETRIC INTEGRATION (STRICT PLAN — USE FOR ALL TRIG POWER INTEGRALS)
-========================
-
-**NEVER use IBP for integrals of sin/cos/tan/sec/csc/cot powers. Use this plan instead.**
-
-Always explicitly state the Pythagorean identity used:
-- sin²x + cos²x = 1
-- 1 + tan²x = sec²x
-- 1 + cot²x = csc²x
-
-### sin/cos integrals:
-- One power odd → save ONE factor of the odd function, convert rest using sin²x + cos²x = 1, substitute.
-- Both powers even → use half-angle identities, then integrate.
-
-### sec/tan integrals:
-- Power of sec EVEN → save sec²x dx, convert rest using 1 + tan²x = sec²x, u = tan x.
-- Power of sec ODD → save sec(x)tan(x) dx, convert remaining tan² using tan²x = sec²x − 1, u = sec x.
-- Otherwise save derivative pair (sec·tan) when present.
-
-### csc/cot integrals:
-- Power of csc EVEN → save csc²x dx, convert rest using 1 + cot²x = csc²x, u = −cot x.
-- Power of csc ODD → save csc(x)cot(x) dx, convert remaining cot² using cot²x = csc²x − 1, u = csc x.
-- Otherwise save derivative pair when present.
-
-**Never guess substitutions. Follow the plan exactly.**
-
-========================
-INTEGRATION BY PARTS (IBP) — ONLY FOR NON-TRIG-POWER INTEGRALS
-========================
-
-Tabular method ONLY. Formula ∫u dv = uv − ∫v du is forbidden.
-
-Type I: Polynomial × trig/exponential
-→ Polynomial in u column, stop when derivative = 0
-
-Type II: Exponential × trig (e.g., ∫eˣ sin x dx)
-→ Continue until original integral reappears, move left, solve
-
-Type III: ln(x) or inverse trig
-→ Force IBP with dv = 1
-
-After IBP, verify using the known general formula.
-General formulas are for confirmation only, never the primary method.
-
-IBP TABLE LANGUAGE:
-Use only: "over and down", "straight across", "same as the original integral", "move to the left-hand side".
-Forbidden: diagonal process, diagonal term.
-
-========================
-TRIGONOMETRIC SUBSTITUTION
-========================
-
-√(a² − x²) → x = a sinθ
-√(x² + a²) → x = a tanθ
-√(x² − a²) → x = a secθ
-
-Always identify type first. Always convert back to x.
-
-========================
-PARTIAL FRACTIONS
-========================
-
-Degree(top) ≥ degree(bottom) → polynomial division first
-Types: distinct linear, repeated linear, irreducible quadratic
-Denominator must be fully factored
-
-========================
-SERIES
-========================
-
-Always start with Test for Divergence.
-If lim aₙ ≠ 0 → diverges immediately.
-
-Test Selection:
-- Pure powers → p-test
-- Geometric → geometric test
-- Factorials/exponentials → ratio test
-- nth powers → root test
-- Addition/subtraction of terms → Limit Comparison Test (default)
-
-Speed hierarchy: ln n ≪ nᵖ ≪ aⁿ ≪ n! ≪ nⁿ
-
-Limit Comparison Test (REQUIRED 4 STEPS):
-1. Choose bₙ as dominant numerator over dominant denominator; simplify.
-2. Compute lim (aₙ / bₙ) = c, 0 < c < ∞.
-3. Evaluate simpler series Σbₙ.
-4. Conclude convergence/divergence by LCT.
-
-========================
-POWER SERIES & TAYLOR
-========================
-
-Power Series: Use Ratio Test first, solve |x − a| < R, test endpoints separately.
-Taylor/Maclaurin: Use known series when possible.
-Error: Alternating → Alternating Estimation Theorem; Taylor → Lagrange Remainder.
-
-========================
-APPLICATIONS OF INTEGRATION
-========================
-
-Area: top − bottom, right − left
-Volumes: disks/washers or shells
-Work: draw a slice, distance varies
-Mass: same geometry as volume
-
-========================
-OUTPUT FORMAT RULES (CRITICAL)
-========================
-- All math MUST be in LaTeX format
-- Use $...$ for inline math
-- Use $$...$$ for display/block math
-- Do NOT use Unicode superscripts. Always use LaTeX: $x^2$
-- End every indefinite integral with + C
-- Final answer must be in exactly ONE \\boxed{...}
-
-========================
-ABSOLUTE REQUIREMENTS
-========================
-1. FORBIDDEN: "numerical methods", "software", "calculator", "CAS", "elliptic integral", "too complex".
-2. FINISH every problem with a FINAL SYMBOLIC ANSWER inside \\boxed{...}.
-3. For definite integrals: EVALUATE the bounds completely.
-4. NEVER leave a problem incomplete.
-5. Leave symbolic values as symbols (e.g., \\sin(1), \\ln(2)).
-
-You are a private professor, not a calculator.
-Structure first. Repetition builds mastery.
+RULES (non-negotiable):
+- Always fully complete math problems; never stop at setup.
+- Never mention numerical methods, software, calculators, CAS, or elliptic integrals.
+- Use clean LaTeX only: inline $...$, display $$...$$.
+- Indefinite integrals MUST end with + C.
+- Final answer MUST contain exactly one \\boxed{...}.
+- Verify correctness internally before responding.
 `;
 
 // --------------------
-// STRICT RETRY PROMPT (appended on retry)
+// METHOD CARDS (injected only when relevant)
 // --------------------
-const STRICT_RETRY_SUFFIX = `
+const CARD_TRIG_POWER = `TRIGONOMETRIC INTEGRATION (STRICT PLAN)
 
-CRITICAL: YOUR PREVIOUS RESPONSE FAILED VERIFICATION.
+Always state the identity used:
+- $\sin^2x+\cos^2x=1$  or  $1+\tan^2x=\sec^2x$  or  $1+\cot^2x=\csc^2x$.
 
-🚨 FOR TRIG POWER INTEGRALS (tan/sec/sin/cos/csc/cot): 
-- DO NOT USE INTEGRATION BY PARTS.
-- For sec/tan with ODD sec power: save sec(θ)tan(θ)dθ, convert tan² → sec² − 1, substitute u = sec(θ).
-- For sin/cos with ODD sin power: save sin(x)dx, convert sin² → 1 − cos², substitute u = cos(x).
+sin/cos:
+- One power odd: save ONE factor of the odd function, convert the rest with $\sin^2x+\cos^2x=1$, substitute.
+- Both even: use half-angle identities.
 
-You MUST:
-1. Follow the TRIGONOMETRIC INTEGRATION PLAN exactly
-2. Complete with a symbolic answer in exactly ONE \\boxed{...}
-3. Evaluate all definite integral bounds completely
-4. NO mentions of numerical methods, software, CAS, or "too complex"
-5. Verify by differentiating your answer before responding
-`;
+sec/tan:
+- If sec power even: save $\sec^2x\,dx$, convert with $1+\tan^2x=\sec^2x$, $u=\tan x$.
+- If sec power odd: save $\sec x\tan x\,dx$, convert remaining $\tan^2x=\sec^2x-1$, $u=\sec x$.
+
+csc/cot:
+- If csc power even: save $\csc^2x\,dx$, convert with $1+\cot^2x=\csc^2x$, $u=-\cot x$.
+- If csc power odd: save $\csc x\cot x\,dx$, convert remaining $\cot^2x=\csc^2x-1$, $u=\csc x$.
+
+ABSOLUTE: Do NOT use Integration by Parts for trig power integrals.`;
+
+const CARD_IBP_TYPE2 = `INTEGRATION BY PARTS (TABULAR) — TYPE II (exp × trig)
+
+Use tabular method only.
+Continue until the original integral reappears; then it is the "same as the original integral" — move it to the left-hand side and solve algebraically.
+Use the language: "over and down", "straight across".`;
+
+const CARD_SERIES = `SERIES
+
+Start with Test for Divergence.
+If it is a sum/difference of terms, default to Limit Comparison Test (LCT) in 4 steps:
+1) pick dominant $b_n$; 2) compute $\lim a_n/b_n=c$; 3) analyze $\sum b_n$; 4) conclude for $\sum a_n$.`;
+
+// --------------------
+// STRICT RETRY (append only after deterministic failure)
+// --------------------
+const STRICT_RETRY_SUFFIX = `CRITICAL: Your previous response failed verification.
+Re-solve from scratch and obey the relevant Method Card exactly.
+Final answer must be exactly one \\boxed{...} and no forbidden phrases.`;
+
+// --------------------
+// REQUEST CLASSIFICATION (deterministic)
+// --------------------
+function classify(userText: string) {
+  const t = userText || "";
+  const isSeries = /\bseries\b|\bconverg|\bdiverg|\bsum\b|∑/i.test(t);
+
+  // trig power integral: presence of trig functions and a power OR multiple factors
+  const isTrigPowerIntegral = /\bint(egral)?\b|∫/i.test(t) && /(sin|cos|tan|sec|csc|cot)/i.test(t) &&
+    (/(sin|cos|tan|sec|csc|cot)\s*\^\s*\d+/i.test(t) || /(sin|cos|tan|sec|csc|cot)\s*\d+/i.test(t));
+
+  // IBP type II (exp × trig): e^x / exp(x) paired with trig
+  const isIbpType2 = /(e\^|exp\()/.test(t) && /(sin|cos)/i.test(t) && /\bint(egral)?\b|∫/i.test(t);
+
+  return { isSeries, isTrigPowerIntegral, isIbpType2 };
+}
 
 // --------------------
 // RED FLAG CHECKER (deterministic, no LLM)
@@ -274,10 +142,15 @@ function checkRedFlags(response: string): string[] {
     flags.push("wrong_trig_antiderivative");
   }
   
-  // IBP incorrectly used for trig power integral (tan/sec/sin/cos powers)
-  const hasTrigPowerIntegral = /\\int.*?(tan|sec|sin|cos|csc|cot)\s*\^?\s*\d/i.test(response);
-  const usedIBP = /integration\s+by\s+parts|ibp|tabular\s+method|u\s*=\s*(tan|sec|sin|cos).*?dv\s*=/i.test(response);
-  if (hasTrigPowerIntegral && usedIBP && !/e\^|exp\(|polynomial/i.test(response)) {
+  // IBP incorrectly used for trig power integral (tan/sec/sin/cos/sec/csc/cot powers)
+  const hasTrigPowerInResponse =
+    /\\int[\s\S]*?(sin|cos|tan|sec|csc|cot)\s*\^\s*\d+/i.test(response) ||
+    /\\int[\s\S]*?(sin|cos|tan|sec|csc|cot)(?:\s*\(|\s*[a-zA-Z])/i.test(response);
+  const usedIBP =
+    /integration\s+by\s+parts|\bibp\b|tabular\s+method|\buv\b\s*-\s*\\int|u\s*=.*?dv\s*=/i.test(
+      response
+    );
+  if (hasTrigPowerInResponse && usedIBP) {
     flags.push("ibp_used_for_trig_power");
   }
   
@@ -301,7 +174,8 @@ async function callOpenAI(
     body: JSON.stringify({
       model,
       temperature: 0,
-      max_tokens: 4000,
+      // cap output to reduce cost/latency; most Calc 2 solutions fit well under this
+      max_tokens: 1800,
       messages,
     }),
   });
@@ -373,6 +247,13 @@ export default async function handler(
   let userMessage = "";
   let files: Array<{ name: string; type: string; data: string }> = [];
 
+  // Optional conversation history from frontend
+  const priorMessages: Array<{ role: string; content: string }> = Array.isArray(
+    (req.body as any)?.messages
+  )
+    ? (req.body as any).messages
+    : [];
+
   const { message, files: uploadedFiles } = req.body ?? {};
 
   if (typeof message === "string") {
@@ -441,44 +322,82 @@ export default async function handler(
   // --------------------
   // DETECT IF MATH PROBLEM (for retry logic)
   // --------------------
-  const isMathProblem = /\bint(egral)?\b|\bintegrate\b|\bsolve\b|\bseries\b|\bconverg|\bdiverg|\blim(it)?\b|\bderivative\b|\bd\/dx\b|∫|∑|sin|cos|tan|sec|csc|cot/i.test(userMessage);
+  const isMathProblem = /\bint(egral)?\b|\bintegrate\b|\bseries\b|\bconverg|\bdiverg|\blim(it)?\b|\bderivative\b|\bd\/dx\b|∫|∑|sin|cos|tan|sec|csc|cot/i.test(
+    userMessage
+  );
+
+  const cls = classify(userMessage);
+
+  const methodCards: string[] = [];
+  if (cls.isTrigPowerIntegral) methodCards.push(CARD_TRIG_POWER);
+  if (cls.isIbpType2) methodCards.push(CARD_IBP_TYPE2);
+  if (cls.isSeries) methodCards.push(CARD_SERIES);
+
+  const systemPrompt = [BASE_SYSTEM_PROMPT, ...methodCards].join("\n\n");
 
   // --------------------
   // ATTEMPT LOGIC WITH RETRY
   // --------------------
   try {
     const apiKey = process.env.OPENAI_API_KEY!;
+
+     const baseModel = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
     
-    // Attempt 1: gpt-4o-mini with full system prompt
+    // Build messages: system + (optional) prior conversation + current user
+    const history: OpenAIMessage[] = priorMessages
+      .filter(
+        (m) =>
+          m &&
+          (m.role === "user" || m.role === "assistant") &&
+          typeof m.content === "string" &&
+          m.content.trim().length > 0
+      )
+      // keep history small to control tokens
+      .slice(-10)
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    // Attempt 1
     const messages1: OpenAIMessage[] = [
-      { role: "system", content: WOODY_SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
+      ...history,
       { role: "user", content: userContent },
     ];
     
-    let response = await callOpenAI(messages1, "gpt-4o-mini", apiKey);
+    let response = await callOpenAI(messages1, baseModel, apiKey);
     
     // For math problems, check red flags and potentially retry
     if (isMathProblem) {
       let redFlags = checkRedFlags(response);
       
+      // Extra deterministic enforcement: if request is trig-power, IBP mention is a hard fail
+      if (cls.isTrigPowerIntegral && /integration\s+by\s+parts|\bibp\b|tabular\s+method|\buv\b\s*-\s*\\int/i.test(response)) {
+        redFlags = Array.from(new Set([...redFlags, "ibp_used_for_trig_power_request"]));
+      }
+
       if (redFlags.length > 0) {
         console.log("Attempt 1 red flags:", redFlags);
         
-        // Attempt 2: gpt-4o-mini with strict retry suffix
+        // Attempt 2: retry with strict suffix (same short base + cards)
         const messages2: OpenAIMessage[] = [
-          { role: "system", content: WOODY_SYSTEM_PROMPT + STRICT_RETRY_SUFFIX },
+          { role: "system", content: systemPrompt + "\n\n" + STRICT_RETRY_SUFFIX },
+          ...history,
           { role: "user", content: userContent },
         ];
         
-        response = await callOpenAI(messages2, "gpt-4o-mini", apiKey);
+        response = await callOpenAI(messages2, baseModel, apiKey);
         redFlags = checkRedFlags(response);
+
+        if (cls.isTrigPowerIntegral && /integration\s+by\s+parts|\bibp\b|tabular\s+method|\buv\b\s*-\s*\\int/i.test(response)) {
+          redFlags = Array.from(new Set([...redFlags, "ibp_used_for_trig_power_request"]));
+        }
         
         if (redFlags.length > 0) {
           console.log("Attempt 2 red flags:", redFlags);
           
-          // Attempt 3: Escalate to gpt-4o
+          // Attempt 3: Escalate once to gpt-4o
           const messages3: OpenAIMessage[] = [
-            { role: "system", content: WOODY_SYSTEM_PROMPT + STRICT_RETRY_SUFFIX },
+            { role: "system", content: systemPrompt + "\n\n" + STRICT_RETRY_SUFFIX },
+            ...history,
             { role: "user", content: userContent },
           ];
           
