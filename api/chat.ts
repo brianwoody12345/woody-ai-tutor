@@ -174,8 +174,7 @@ async function callOpenAI(
     body: JSON.stringify({
       model,
       temperature: 0,
-      // cap output to reduce cost/latency; most Calc 2 solutions fit well under this
-      max_tokens: 1800,
+      max_tokens: 4096,
       messages,
     }),
   });
@@ -341,7 +340,8 @@ export default async function handler(
   try {
     const apiKey = process.env.OPENAI_API_KEY!;
 
-     const baseModel = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
+    // USE GPT-4O BY DEFAULT — same model as your working custom GPT
++    const baseModel = (process.env.OPENAI_MODEL || "gpt-4o").trim();
     
     // Build messages: system + (optional) prior conversation + current user
     const history: OpenAIMessage[] = priorMessages
