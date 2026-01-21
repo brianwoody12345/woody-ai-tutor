@@ -341,7 +341,7 @@ export default async function handler(
     const apiKey = process.env.OPENAI_API_KEY!;
 
     // USE GPT-4O BY DEFAULT — same model as your working custom GPT
-+    const baseModel = (process.env.OPENAI_MODEL || "gpt-4o").trim();
+    const baseModel = (process.env.OPENAI_MODEL || "gpt-4o").trim();
     
     // Build messages: system + (optional) prior conversation + current user
     const history: OpenAIMessage[] = priorMessages
