@@ -1,28 +1,62 @@
-// @ts-ignore
+// @ts-ignore - types provided by Vercel at runtime
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-// ==========================
-// SIMPLE SYSTEM PROMPT
-// ==========================
-const SYSTEM_PROMPT = `
-You are Professor Woody.
+/**
+ * SIMPLE, STABLE CHAT HANDLER
+ * - GPT-4o only
+ * - Short system prompt
+ * - Persistent image support
+ * - No retries, no verification loops
+ * - Let the model do math naturally
+ */
 
-Solve calculus problems completely and correctly.
-Show clear, logical steps.
-Finish every problem.
-Do not leave unevaluated integrals.
-Give exact symbolic answers.
-Use LaTeX for all mathematics.
+// --------------------
+// SYSTEM PROMPT
+// --------------------
+const SYSTEM_PROMPT = `
+You are Professor Woody, a calm, confident university calculus instructor.
+
+Rules:
+- Fully solve every math problem. Never stop at setup.
+- Finish with a final exact answer.
+- Evaluate all bounds for definite integrals.
+- Keep answers symbolic when appropriate (e.g. sin(1), sin(e)).
+- Use clean LaTeX formatting.
+- Do not mention numerical methods, software, or calculators.
+
+Tone: instructional, clear, supportive.
 `;
 
-// ==========================
-// MAIN HANDLER
-// ==========================
+// --------------------
+// MEMORY FOR LAST IMAGES (in-memory, per instance)
+// --------------------
+let lastImageContents: Array<{
+  type: "image_url";
+  image_url: { url: string; detail: string };
+}> = [];
+
+// --------------------
+// TYPES
+// --------------------
+type MessageContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string; detail?: string } }
+    >;
+
+interface OpenAIMessage {
+  role: "system" | "user" | "assistant";
+  content: MessageContent;
+}
+
+// --------------------
+// HANDLER
+// --------------------
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ) {
-  // CORS
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -32,6 +66,8 @@ export default async function handler(
   }
 
   res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method !== "POST") {
     res.status(405).send("Method Not Allowed");
@@ -43,42 +79,87 @@ export default async function handler(
     return;
   }
 
-  // Parse input
-  const { message, messages, files } = req.body ?? {};
-
+  // --------------------
+  // PARSE REQUEST
+  // --------------------
   let userMessage = "";
+  let files: Array<{ name: string; type: string; data: string }> = [];
+
+  const { message, files: uploadedFiles } = req.body ?? {};
 
   if (typeof message === "string") {
     userMessage = message;
-  } else if (Array.isArray(messages) && messages.length > 0) {
-    userMessage = messages[messages.length - 1]?.content || "";
   }
 
-  if (!userMessage && (!files || files.length === 0)) {
+  if (Array.isArray(uploadedFiles)) {
+    files = uploadedFiles;
+  }
+
+  if (!userMessage && files.length === 0) {
     res.status(400).send("Missing message");
     return;
   }
 
-  // Normalize common unicode artifacts (important)
-  const normalizeMathText = (s: string) =>
-    String(s ?? "")
-      .replace(/\u2061/g, "")
-      .replace(
-        /\b(cos|sin|tan|sec|csc|cot)\s*([0-9]+)\s*\(/gi,
-        (_m, fn, p) => `${fn}^${p}(`
-      );
+  // --------------------
+  // IMAGE HANDLING (PERSISTENCE RESTORED)
+  // --------------------
+  const imageContents: Array<{
+    type: "image_url";
+    image_url: { url: string; detail: string };
+  }> = [];
 
-  const textContent = normalizeMathText(userMessage);
+  if (files.length > 0) {
+    for (const file of files) {
+      if (file.type.startsWith("image/")) {
+        imageContents.push({
+          type: "image_url",
+          image_url: {
+            url: file.data,
+            detail: "high",
+          },
+        });
+      }
+    }
 
-  // Build OpenAI messages
-  const openaiMessages: any[] = [
+    // Save images for next turn
+    if (imageContents.length > 0) {
+      lastImageContents = imageContents;
+    }
+  }
+
+  // If no new images, reuse last ones
+  const finalImages =
+    imageContents.length > 0 ? imageContents : lastImageContents;
+
+  // --------------------
+  // BUILD USER MESSAGE
+  // --------------------
+  let userContent: MessageContent;
+
+  if (finalImages.length > 0) {
+    userContent = [
+      {
+        type: "text",
+        text:
+          userMessage ||
+          "Please analyze the attached homework and solve the requested problem.",
+      },
+      ...finalImages,
+    ];
+  } else {
+    userContent = userMessage;
+  }
+
+  const messages: OpenAIMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: textContent },
+    { role: "user", content: userContent },
   ];
 
-  // Call OpenAI (NON-STREAMING, like Custom GPT)
+  // --------------------
+  // OPENAI CALL (SINGLE, CLEAN)
+  // --------------------
   try {
-    const response = await fetch(
+    const upstream = await fetch(
       "https://api.openai.com/v1/chat/completions",
       {
         method: "POST",
@@ -89,24 +170,26 @@ export default async function handler(
         body: JSON.stringify({
           model: "gpt-4o",
           temperature: 0,
-          max_tokens: 2048,
-          messages: openaiMessages,
+          max_tokens: 3000,
+          messages,
         }),
       }
     );
 
-    if (!response.ok) {
-      const err = await response.text();
-      res.status(response.status).send(err);
-      return;
+    if (!upstream.ok) {
+      const errorText = await upstream.text().catch(() => "Unknown error");
+      return res
+        .status(upstream.status)
+        .send(`OpenAI API error: ${errorText}`);
     }
 
-    const data = await response.json();
-    const output = data?.choices?.[0]?.message?.content ?? "";
+    const json = await upstream.json();
+    const content = json?.choices?.[0]?.message?.content ?? "";
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.status(200).send(output);
-  } catch (err: any) {
-    res.status(500).send(err?.message || "Server error");
+    res.status(200).send(content);
+  } catch (error) {
+    console.error("Chat error:", error);
+    res.status(500).send("Server error");
   }
 }
